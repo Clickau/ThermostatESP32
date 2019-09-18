@@ -138,21 +138,6 @@ time_t programTempEnd;
 class StreamingHttpClient : private HTTPClient
 {
 public:
-	// inspiration from the FirebaseArduino library
-	// 
-	/*void end()
-	{
-		if (_forceReuse)
-		{
-			_canReuse = true;
-		}
-		HTTPClient::end();
-	}*/
-	/*void forceReuse(bool forceReuse)
-	{
-		_forceReuse = forceReuse;
-	}*/
-
 	bool consumeStreamIfAvailable()
 	{
 		if (!connected())
@@ -175,30 +160,9 @@ public:
 			return false;
 		return true;
 	}
-	/*bool initializeStream()
-	{
-		setReuse(true);
-		forceReuse(true);
-		begin(String(F("https://")) + FPSTR(db_path) + FPSTR(programPath) + F(".json?auth=") + FPSTR(auth), String(FPSTR(firebaseFingerprint)));
-		addHeader("Accept", "text/event-stream");
-		const char* headers[] = { "Location" };
-		collectHeaders(headers, 1);
-		int status = GET();
-
-		while (status == 307)
-		{
-			redirectTo(header("Location"));
-			status = GET();
-		}
-		if (status != 200)
-			return false;
-		return true;
-	}*/
-
 	bool initializeStream()
 	{
 		setReuse(true);
-		//forceReuse(true);
 		setFollowRedirects(true);
 		//secureClient->setFingerprint(firebaseFingerprint);
 		//begin(*secureClient, String(F("https://")) + FPSTR(db_path) + FPSTR(programPath) + F(".json?auth=") + FPSTR(auth));
@@ -213,12 +177,8 @@ public:
 	void closeStream()
 	{
 		setReuse(false);
-		//forceReuse(false);
 		end();
 	}
-
-private:
-	//bool _forceReuse = false;
 };
 
 Adafruit_PCD8544 display = Adafruit_PCD8544(pinDC, pinCS, pinRST);
