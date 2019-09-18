@@ -9,8 +9,8 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_PCD8544.h>
 #include <ArduinoOTA.h>
-#include <WiFiUdp.h>	 // idk era in example sketch-ul de la BasicOTA so...
-#include <ESP8266mDNS.h> //idem
+#include <WiFiUdp.h>
+#include <ESP8266mDNS.h>
 #include <Adafruit_Sensor.h>
 #include <DHT.h>
 #include <DHT_U.h>
@@ -21,7 +21,7 @@
 
 #define DEGREESYMB (char)247
 
-//consts
+
 const char ErrorOpenSPIFFS[] PROGMEM = "Critical Error\nOpening SPIFFS";
 const char ErrorOpenConfigWrite[] PROGMEM = "Critical Error\nOpening config\nfor writing";
 const char ErrorOpenConfigRead[] PROGMEM = "Error\nOpening config\ntry Setup";
@@ -38,39 +38,33 @@ const char SetupWifiMessage[] PROGMEM = "Setup Wifi";
 const char OTAUpdateMessage[] PROGMEM = "OTA Update";
 const char StartupMenuMessage[] PROGMEM = "Startup Menu";
 const char NTPServer[] PROGMEM = "pool.ntp.org";
-const int8_t timezoneOffset = 2;					 // in Romania, fusul orar e UTC+2
-const int8_t timezoneOffsetMinutes = 0;				 // pentru fusuri orare care nu sunt numere intregi, de ex UTC+2.5 se va scrie ca timezoneOffset=2, timezoneOffsetMinutes = 30
-const bool timezoneDST = true;						 // true daca in fusul orar se foloseste ora de vara/iarna
-const char ap_ssid[] = "TermostatSetupWifi";		 // not progmem because softAP takes char* args and blah blah blah
-const char ap_password[] = "Termostat123";			 // idem
-const unsigned long waitingTimeInStartupMenu = 5000; // timpul de inactivitate, dupa care se va selecta automat optiunea funcitonare normala
-const uint8_t pinDC = 16;							 // pinul la care conectam pinul de D/C de la display
-const uint8_t pinCS = 5;							 // chip select (c/s) sau chip enable (ce)
-const uint8_t pinRST = 4;							 // pinul de reset al display-ului
-const uint8_t displayContrast = 40;					 // contrast pt display ??
-const unsigned long waitingTimeConnectWifi = 10000;  // timpul cat asteptam sa se conecteze la wifi in modul station - daca trece si nu e conectat, dam eroare
-const int NTPInterval = 900;						 // intervalul de timp, in secunde, la care actualizam timpul prin ntp
-const int8_t timesTryNTP = 3;						 // de cate ori incercam sa luam timpul de pe internet, pana cand intram in modul de selectare timp manual si de asemenea, dupa cate erori ale ntp-ului dam eroare
+const int8_t timezoneOffset = 2; // in Romania, the timezone is UTC+2
+const int8_t timezoneOffsetMinutes = 0; // for timezones that are not whole numbers, for example UTC+2.5 will be written as timezoneOffset = 2, timezoneOffsetMinutes = 30
+const bool timezoneDST = true; // true if the timezone uses Daylight Saving (Summer time, Winter time)
+const char ap_ssid[] = "TermostatSetupWifi"; // not progmem because softAP takes char* args
+const char ap_password[] = "Termostat123"; // idem
+const unsigned long waitingTimeInStartupMenu = 5000; // the time after which the normal operation option is automatically selected if no button is pressed, in milliseconds
+const uint8_t pinDC = 16; // DC pin for display
+const uint8_t pinCS = 5; // CS pin for display
+const uint8_t pinRST = 4; // RST pin for display
+const uint8_t displayContrast = 40;
+const unsigned long waitingTimeConnectWifi = 10000; // the time we wait for it to connect to the wifi network, in normal operation mode and OTA mode, in milliseconds
+const int NTPInterval = 900; // the time interval after which we update the time, in seconds
+const int8_t timesTryNTP = 3; // how many times we try to download the time from the internet, before we either enter manual mode, if it happens at startup, or we show an NTP error
 const char GotTime[] PROGMEM = "Got Time:";
-const char FbHost[] PROGMEM = "";
-const char FbAuth[] PROGMEM = "";
-const unsigned long fbDownloadInterval = 60000; // intervalul la care se va descarca programul din firebase, in milisecunde
 const char manualTimeString[] PROGMEM = "Manual Time";
-const int manualTimeStringCursor = 10;
-const char db_path[] PROGMEM = "arduino-test-8c103.firebaseio.com";
-const char auth[] PROGMEM = "wwy3KljIFEEM5Cv4nEbVGSkeKXG1rcooeKrUPmjO";
-const char programPath[] PROGMEM = "/Program";
+const char db_path[] PROGMEM = "arduino-test-8c103.firebaseio.com"; // the URL of the Firebase
+const char auth[] PROGMEM = "wwy3KljIFEEM5Cv4nEbVGSkeKXG1rcooeKrUPmjO"; // Firebase secret key
+const char programPath[] PROGMEM = "/Program"; // the path to the schedules
 const char firebaseFingerprint[] PROGMEM = "B6 F5 80 C8 B1 DA 61 C1 07 9D 80 42 D8 A9 1F AF 9F C8 96 7D";
-//const uint8_t firebaseFingerprint[20] = { 0xB6, 0xF5, 0x80, 0xC8, 0xB1, 0xDA, 0x61, 0xC1, 0x07, 0x9D, 0x80, 0x42, 0xD8, 0xA9, 0x1F, 0xAF, 0x9F, 0xC8, 0x96, 0x7D };
-const float tempThreshold = 0.5f;
-const uint8_t timesTryFirebase = 2;
-const unsigned long intervalRetryErrors = 60000; // intervalul de timp dupa care reincercam conectarea la wifi, firebase etc in milisecunde
-const uint8_t dhtPin = 12;				// pinul la care este conectat dht-ul
-const uint8_t dhtType = DHT22;
-const unsigned long intervalUpdateTemperature = 10000; // actualizam temperatura o data la 10 sec
-const int maxNumberOfSensors = 7;			  // numarul maxim de senzori externi utilizati (util pentru a adauga un senzor nou fara a recompila aceasta sursa, daca e nevoie de mai multi, numarul se poate mari)
+const float tempThreshold = 0.5f; // the temperature difference needed between the set temperature and the current room temperature to trigger the heater
+const uint8_t timesTryFirebase = 2; // how many times we try to download the schedules from FB, before showing error
+const unsigned long intervalRetryErrors = 60000; // the time interval after which we try to solve the error, for example reconnecting to wifi, reconnecting to Firebase
+const uint8_t dhtPin = 12; // pin for the One Wire communication with DHT module
+const uint8_t dhtType = DHT22; // module type
+const unsigned long intervalUpdateTemperature = 10000; // the interval after which we update temperature
+const int maxNumberOfSensors = 7; // de scapat de senzori externi deocamdata
 const char programTemporarString[] PROGMEM = "Program Temp.";
-const int programTemporarStringCursor = 4;
 const char programTemporarSensorString[] PROGMEM = "Sensor:%d\n";
 const char programTemporarTempString[] PROGMEM = "Temp:%.1fC\n";
 const char programTemporarDuration1String[] PROGMEM = "Duration:%dm\n";
@@ -79,19 +73,19 @@ const char programTemporarDurationInfiniteString[] PROGMEM = "Duration:inf.\n";
 const char programTemporarOkString[] PROGMEM = "OK";
 const char programTemporarCancelString[] PROGMEM = "CANCEL";
 const char programTemporarDeleteString[] PROGMEM = "DEL";
-const unsigned long waitingTimeInProgramTemporarMenu = 5000; // daca in 5 secunde de la deschiderea meniului de program temporar nu se apasa niciun buton, se revine la functionarea normala
-const float programTemporarTempResolution = 0.5f;
+const unsigned long waitingTimeInProgramTemporarMenu = 5000; // if, after opening the temporary schedule menu, no button is pressed for this many milliseconds, we go back to normal operation
+const float programTemporarTempResolution = 0.5f; // the minimum increment in temperature in the temporary schedule menu, for example if it if 0.5f, you can set the target temperature to 20 degrees or 20.5, but not 20.2
 const char displayHumidityNotAvailableString[] PROGMEM = "N\\A"; //displays 'N\A' if the humidity can't be read
 const char displayHumidityString[] PROGMEM = "%d%%"; //the %d is a placeholder for the relative humidity (integer), and %% just writes %
 const char displayDateLine1String[] PROGMEM = "%s. %d\n"; //the %s is a placeholder for the short weekday (e.g. Mon) and %d for the date (e.g. 2)
 const char displayDateLine2String[] PROGMEM = "%.2d.%d"; //the %.2d is a placeholder for the month(with a leading 0 if needed, e.g. 08 or 12) and the %d for the year
 const char displayTempLetter = 'C'; //C for Celsius, it is the letter displayed next to the degree sign and the temperature, doesn't actually change the scale
 const char displayClockFormatString[] PROGMEM = "%d:%d";// the first %d is a placeholder for the hour, and the second one, for the minute
-const char displayErrorWifiString[] PROGMEM = "!W";
-const char displayErrorNTPString[] PROGMEM = "!N";
-const char displayErrorFirebaseString[] PROGMEM = "!F";
-const char displayErrorTemperatureString[] PROGMEM = "!T";
-const char displayErrorHumidityString[] PROGMEM = "!H";
+const char displayErrorWifiString[] PROGMEM = "!W"; // displays this if wifi doesn't work
+const char displayErrorNTPString[] PROGMEM = "!N"; // displays this if NTP doesn't work
+const char displayErrorFirebaseString[] PROGMEM = "!F"; // displays this if Firebase doesn't work
+const char displayErrorTemperatureString[] PROGMEM = "!T"; // displays this if the temperature sensor doesn't work
+const char displayErrorHumidityString[] PROGMEM = "!H"; // displays this if the humidity sensor doesn't work
 
 //contains the pixel values that make up the flame icon displayed when the heater is on
 const byte flame[] PROGMEM = {
@@ -135,9 +129,13 @@ int programTempSensor;
 float programTempTemperature;
 time_t programTempEnd;
 
+// custom HTTPClient that can handle Firebase Streaming
 class StreamingHttpClient : private HTTPClient
 {
 public:
+	// checks if anything changed in the database
+	// if it receives updates on the stream, it checks if the event is of type 'put', and if so, it means something in the database changed, so it clears the stream and returns true
+	// otherwise, it returns false
 	bool consumeStreamIfAvailable()
 	{
 		if (!connected())
@@ -152,25 +150,33 @@ public:
 			return false;
 		if (!client->available())
 			return false;
+		/*
+		The received stream event has the format:
+		event: ...
+		data: ...
+		(empty line)
+		so the event type is in the first line, starting from the 7th character
+		*/
 		String eventType = client->readStringUntil('\n').substring(7);
-		// consumam tot stringul primit
+		// we clear the stream
 		client->readStringUntil('\n');
 		client->readStringUntil('\n');
+		// the event might be just a keep-alive, so we check if the type is 'put'
 		if (eventType != "put")
 			return false;
 		return true;
 	}
 	bool initializeStream()
 	{
+		// we keep the connection alive after the first request
 		setReuse(true);
 		setFollowRedirects(true);
-		//secureClient->setFingerprint(firebaseFingerprint);
-		//begin(*secureClient, String(F("https://")) + FPSTR(db_path) + FPSTR(programPath) + F(".json?auth=") + FPSTR(auth));
+		// we open a secure connection
 		begin(String(F("https://")) + FPSTR(db_path) + FPSTR(programPath) + F(".json?auth=") + FPSTR(auth), String(FPSTR(firebaseFingerprint)));
 		addHeader("Accept", "text/event-stream");
 		int status = GET();
 
-		if (status != 200)
+		if (status != HTTP_CODE_OK)
 			return false;
 		return true;
 	}
@@ -184,6 +190,7 @@ public:
 Adafruit_PCD8544 display = Adafruit_PCD8544(pinDC, pinCS, pinRST);
 StreamingHttpClient firebaseClient;
 DHT_Unified dht(dhtPin, dhtType);
+// did this so you can easily change the type of sensor used (if it supports the Unified Sensor library), not sure if it's the best way though
 DHT_Unified::Temperature tSens = dht.temperature();
 DHT_Unified::Humidity hSens = dht.humidity();
 Adafruit_Sensor *tempSensor = &tSens;
@@ -518,7 +525,7 @@ void programTemporarSetup()
 void programTemporarHelper(int sensor, float temp, int duration, int option, int sel)
 {
 	display.clearDisplay();
-	display.setCursor(programTemporarStringCursor, 0);
+	display.setCursor(4, 0);
 	display.println(FPSTR(programTemporarString));
 	display.println();
 
@@ -1037,7 +1044,7 @@ void manualTimeHelper(int h, int m, int d, int mth, int y, int sel)
 	display.clearDisplay();
 	display.setTextSize(1);
 	display.setTextColor(BLACK);
-	display.setCursor(manualTimeStringCursor, 0);
+	display.setCursor(10, 0);
 	display.println(FPSTR(manualTimeString));
 
 	display.setCursor(27, 15);
