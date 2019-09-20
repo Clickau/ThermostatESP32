@@ -111,7 +111,6 @@ enum class Button
 	Jos = 2
 };
 
-bool isListeningForButtonPress = false;
 bool heaterState = false;
 String programString;
 bool wifiWorking = true;
@@ -168,6 +167,10 @@ public:
 	}
 	bool initializeStream()
 	{
+		if (_initialized)
+			closeStream();
+		else
+			_initialized = true;
 		// we keep the connection alive after the first request
 		setReuse(true);
 		setFollowRedirects(true);
@@ -185,6 +188,8 @@ public:
 		setReuse(false);
 		end();
 	}
+private:
+	bool _initialized = false;
 };
 
 Adafruit_PCD8544 display = Adafruit_PCD8544(pinDC, pinCS, pinRST);
@@ -226,7 +231,6 @@ void virtualShowWifiSetupMenu();
 void showStartupMenu();
 void displayStartupMenu(int highlightedOption);
 void virtualDisplayStartupMenu(int highlightedOption);
-void dontListenForButtonPress();
 void sendSignalToHeater(bool _on);
 void virtualSendSignalToHeater(bool _on);
 void UpdateDisplay();
@@ -242,9 +246,8 @@ void displayErrors(int cursorX, int cursorY);
 
 void setup()
 {
-	// setup
+	// normal operation setup
 	Serial.begin(115200); // in serial monitor, trebuie sa fie activata optiunea Both NL & CR
-						  // display-ul este folosit in toate modurile de functionare
 	display.begin();
 	display.setContrast(displayContrast);
 	// oprim central la reset, pentru orice eventualitate
@@ -314,11 +317,13 @@ void setup()
 
 void loop()
 {
-	//functionare normala loop
+	// normal operation loop
 	if (firebaseWorking)
 	{
 		if (firebaseClient.consumeStreamIfAvailable())
 		{
+			// something in the database changed, we download the whole database
+			// we try it for timesTryFirebase times, before we give up
 			Serial.println("new change!");
 			int result;
 			int i = 0;
@@ -336,6 +341,7 @@ void loop()
 				}
 				else
 				{
+					// if everything worked corectly, we store the received string, which contains the json representation of the schedules
 					programString = getHttp.getString();
 					getHttp.end();
 					break;
@@ -350,13 +356,15 @@ void loop()
 			else
 			{
 				Serial.println("got new program");
-				decideHeaterFate();
 			}
 		}
 	}
+	// we check if wifi works
 	wifiWorking = WiFi.isConnected();
+	// if we have never succesfully downloaded the time, or if timesTryNTP * NTPInterval time has passed since the last succesfull time sync, we set NTPWorking to false
 	NTPWorking = NTP.getLastNTPSync() != 0 && now() - NTP.getLastNTPSync() < timesTryNTP * NTPInterval;
-	if (millis() - lastRetryErrors > intervalRetryErrors) // o data la 1 minut reincercam conectarea la wifi, firebase etc
+	// once every intervalRetryError milliseconds, we try to solve the errors, i.e. reconnect to wifi, firebase etc
+	if (millis() - lastRetryErrors > intervalRetryErrors)
 	{
 		Serial.println("trying to fix errors, if any");
 		lastRetryErrors = millis();
@@ -374,6 +382,7 @@ void loop()
 		Serial.printf("humWorking: %d", humWorking);
 		Serial.printf("tempWorking: %d", tempWorking);
 	}
+	// we update temperature, humidity every intervalUpdateTemperature milliseconds, and we reevaluate the schedule
 	if (millis() - lastTemperatureUpdate >= intervalUpdateTemperature)
 	{
 		Serial.println("updating temperature");
@@ -382,6 +391,8 @@ void loop()
 		updateHum();
 		decideHeaterFate();
 	}
+	// check if enter was pressed
+	// in the future, this will run alone with UpdateDisplay on a separate core, on the esp32
 	Button pressed = buttonPressed();
 	if (pressed == Button::Enter)
 	{
@@ -390,6 +401,7 @@ void loop()
 	}
 	UpdateDisplay();
 }
+
 
 void programTemporarSetup()
 {
@@ -1205,11 +1217,6 @@ Button virtualButtonPressed()
 {
 	// metoda pentru a testa functionalitate butoanelor, din software
 	// citeste valoarea butoanelor din serial monitor: -1 daca stringul citit e gol sau nu se primeste niciun string, 0 daca se trimite 0,ENTER sau enter, 1 daca se trimite 1, sus sau SUS, 2 daca se trimite 2, jos sau JOS
-	if (!isListeningForButtonPress)
-	{
-		Serial.println("Listening for button press");
-		isListeningForButtonPress = true;
-	}
 	if (!(Serial.available() > 0))
 		return Button::None;				   // daca nu se primeste niciun string, presupunem ca nu s-a apasat niciun buton
 	String str = Serial.readStringUntil('\r'); // citeste string-ul pana la \r
@@ -1231,14 +1238,6 @@ Button virtualButtonPressed()
 		return Button::Jos;
 	}
 	return Button::None;
-}
-
-void dontListenForButtonPress()
-{
-	// metoda entru a testa functionalitate butoanelor, din software
-	/// afiseaza un mesaj cand nu mai citeste valoarea butoanelor din serial monitor
-	isListeningForButtonPress = false;
-	Serial.println("Not listening for button press");
 }
 
 void sendSignalToHeater(bool _on)
