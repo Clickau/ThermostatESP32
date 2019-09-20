@@ -169,8 +169,7 @@ public:
 	{
 		if (_initialized)
 			closeStream();
-		else
-			_initialized = true;
+		_initialized = true;
 		// we keep the connection alive after the first request
 		setReuse(true);
 		setFollowRedirects(true);
@@ -185,6 +184,7 @@ public:
 	}
 	void closeStream()
 	{
+		_initialized = false;
 		setReuse(false);
 		end();
 	}
