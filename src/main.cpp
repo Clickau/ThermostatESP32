@@ -76,11 +76,11 @@ const char programTemporarDeleteString[] PROGMEM = "DEL";
 const unsigned long waitingTimeInProgramTemporarMenu = 5000; // if, after opening the temporary schedule menu, no button is pressed for this many milliseconds, we go back to normal operation
 const float programTemporarTempResolution = 0.5f; // the minimum increment in temperature in the temporary schedule menu, for example if it if 0.5f, you can set the target temperature to 20 degrees or 20.5, but not 20.2
 const char displayHumidityNotAvailableString[] PROGMEM = "N\\A"; //displays 'N\A' if the humidity can't be read
-const char displayHumidityString[] PROGMEM = "%d%%"; //the %d is a placeholder for the relative humidity (integer), and %% just writes %
+const char displayHumidityString[] PROGMEM = "%.2d%%"; //the %d is a placeholder for the relative humidity (integer), and %% just writes %
 const char displayDateLine1String[] PROGMEM = "%s. %d\n"; //the %s is a placeholder for the short weekday (e.g. Mon) and %d for the date (e.g. 2)
 const char displayDateLine2String[] PROGMEM = "%.2d.%d"; //the %.2d is a placeholder for the month(with a leading 0 if needed, e.g. 08 or 12) and the %d for the year
 const char displayTempLetter = 'C'; //C for Celsius, it is the letter displayed next to the degree sign and the temperature, doesn't actually change the scale
-const char displayClockFormatString[] PROGMEM = "%d:%d";// the first %d is a placeholder for the hour, and the second one, for the minute
+const char displayClockFormatString[] PROGMEM = "%.2d:%.2d";// the first %d is a placeholder for the hour, and the second one, for the minute
 const char displayErrorWifiString[] PROGMEM = "!W"; // displays this if wifi doesn't work
 const char displayErrorNTPString[] PROGMEM = "!N"; // displays this if NTP doesn't work
 const char displayErrorFirebaseString[] PROGMEM = "!F"; // displays this if Firebase doesn't work
@@ -112,21 +112,19 @@ enum class Button
 };
 
 bool heaterState = false;
-String programString;
+String scheduleString;
 bool wifiWorking = true;
 bool firebaseWorking = true;
 bool NTPWorking = true;
 bool tempWorking = true;
 bool humWorking = true;
 float temperature = NAN;
-float temperatures[maxNumberOfSensors + 1];
 int humidity = -1;
 unsigned long lastRetryErrors = 0;
 unsigned long lastTemperatureUpdate = 0;
-bool programTempActiv = false;
-int programTempSensor;
-float programTempTemperature;
-time_t programTempEnd;
+bool temporaryScheduleActive = false;
+float temporaryScheduleTemp = NAN;
+time_t temporaryScheduleEnd = 0;
 
 // custom HTTPClient that can handle Firebase Streaming
 class StreamingHttpClient : private HTTPClient
@@ -206,13 +204,8 @@ Button buttonPressed();
 Button virtualButtonPressed();
 void normalOperationSetup();
 void normalOperationLoop();
-void decideHeaterFate();
 void updateTemp();
 void updateHum();
-float getTemp(int sensor);
-float virtualGetTemp(int sensor);
-bool shouldTurnOnHeater(float temp, float setTemp);
-bool isActive(const JsonObject &program);
 void manualTimeSetup();
 void simpleDisplay(const String &str);
 void manualTimeHelper(int h, int m, int d, int mth, int y, int sel);
@@ -243,16 +236,19 @@ void displayDate(int day, int mth, int year, int wDay, int cursorX, int cursorY)
 void displayFlame(const uint8_t* flameBitmap, int cursorX, int cursorY, int width, int height);
 void displayHumidity(int hum, int cursorX, int cursorY);
 void displayErrors(int cursorX, int cursorY);
+bool evaluateSchedule();
+bool scheduleIsActive(const JsonObject& schedule);
+bool compareTemperatureWithSetTemperature(float temp, float setTemp);
 
 void setup()
 {
 	// normal operation setup
 	Serial.begin(115200); // in serial monitor, trebuie sa fie activata optiunea Both NL & CR
+	display.clearDisplay(); // gets rid of the adafruit logo at the beginning
 	display.begin();
 	display.setContrast(displayContrast);
 	// oprim central la reset, pentru orice eventualitate
 	sendSignalToHeater(false);
-
 	//functionare normala setup
 	dht.begin();
 	Serial.println("Mod selectat Functionare Normala");
@@ -342,7 +338,7 @@ void loop()
 				else
 				{
 					// if everything worked corectly, we store the received string, which contains the json representation of the schedules
-					programString = getHttp.getString();
+					scheduleString = getHttp.getString();
 					getHttp.end();
 					break;
 				}
@@ -385,11 +381,27 @@ void loop()
 	// we update temperature, humidity every intervalUpdateTemperature milliseconds, and we reevaluate the schedule
 	if (millis() - lastTemperatureUpdate >= intervalUpdateTemperature)
 	{
-		Serial.println("updating temperature");
 		lastTemperatureUpdate = millis();
 		updateTemp();
 		updateHum();
-		decideHeaterFate();
+		if (temporaryScheduleActive)
+		{
+			if (now() < temporaryScheduleEnd || temporaryScheduleEnd == -1)
+			{
+				bool signal = compareTemperatureWithSetTemperature(temperature, temporaryScheduleTemp);
+				sendSignalToHeater(signal);
+			}
+			else
+			{
+				temporaryScheduleActive = false;
+			}
+			
+		}
+		else
+		{
+			bool signal = evaluateSchedule();
+			sendSignalToHeater(signal);
+		}
 	}
 	// check if enter was pressed
 	// in the future, this will run alone with UpdateDisplay on a separate core, on the esp32
@@ -402,18 +414,123 @@ void loop()
 	UpdateDisplay();
 }
 
+// function which looks at each schedule in the scheduleString, decides which has the top priority, and returns the signal to send to the heater
+bool evaluateSchedule()
+{
+	if (isnan(temperature))
+	{
+		// the temperature can't be read (sensor error probably)
+		Serial.println("temperature is nan");
+		return false;
+	}
+	bool signal = false;
+	int highestPriority = -1;
+	int beginIndex = 0;
+	beginIndex = scheduleString.indexOf('{', 1); // we find the first occurence of the character '{', excluding the first character; this is the beggining of the first schedule object
+	while (beginIndex != -1)
+	{
+		int endIndex = scheduleString.indexOf('}', beginIndex + 1); // we find the next occurence of '}', starting at beginIndex; this is the end of the first schedule object
+		String str = scheduleString.substring(beginIndex, endIndex + 1); // we get the schedule object as a string
+		Serial.print(str);
+		DynamicJsonDocument doc(400); // we allocate the document enough memory to store even the biggest kind of schedule object
+		deserializeJson(doc, str);
+		JsonObject schedule = doc.as<JsonObject>();
+		if (scheduleIsActive(schedule))
+		{
+			// if a one-time schedule is active, then it has the highest priority, so we stop the loop after it
+			if (schedule["repeat"] == "None")
+			{
+				float setTemp = schedule["setTemp"];
+				signal = compareTemperatureWithSetTemperature(temperature, setTemp);
+				break;
+			}
+			int priority = schedule["priority"];
+			if (priority > highestPriority)
+			{
+				float setTemp = schedule["setTemp"];
+				signal = compareTemperatureWithSetTemperature(temperature, setTemp);
+				highestPriority = priority;
+			}
+		}
+		beginIndex = scheduleString.indexOf('{', endIndex + 1); // we find the next occurence of '{', starting at endIndex; this is the beggining of the next schedule object; we repeat until there are no more objects
+	}
+	return signal;
+}
+
+// function that checks if the supplied schedule object is active at the moment
+bool scheduleIsActive(const JsonObject& schedule)
+{
+	const char* repeat = schedule["repeat"];
+	// if it is a daily schedule, we check if its start time is before the current time and if its end time is after the current time
+	if (strcmp(repeat, "Daily") == 0)
+	{
+		int startTime = schedule["sH"].as<int>() * 60 + schedule["sM"].as<int>();
+		int endTime = schedule["eH"].as<int>() * 60 + schedule["eM"].as<int>();
+		time_t t = now();
+		int time = hour(t) * 60 + minute(t);
+		Serial.println(startTime <= time && time < endTime ? "Active" : "Not active");
+		return startTime <= time && time < endTime;
+	}
+	// weekly schedule, we check if we are on the same weekday and between the start and end time
+	if (strcmp(repeat, "Weekly") == 0)
+	{
+		int wDay = schedule["weekDay"]; // Sunday is day 1
+		int startTime = schedule["sH"].as<int>() * 60 + schedule["sM"].as<int>();
+		int endTime = schedule["eH"].as<int>() * 60 + schedule["eM"].as<int>();
+		time_t t = now();
+		int currWeekDay = weekday(t); // Sunday is day 1
+		int time = hour(t) * 60 + minute(t);
+		Serial.println(wDay == currWeekDay && startTime <= time && time < endTime ? "Active" : "Not active");
+		return wDay == currWeekDay && startTime <= time && time < endTime;
+	}
+	// the schedule doesn't repeat, we check if we are between the start and end time
+	if (strcmp(repeat, "None") == 0)
+	{
+		tmElements_t startTime;
+		tmElements_t endTime;
+		startTime.Second = 0;
+		startTime.Minute = schedule["sM"];
+		startTime.Hour = schedule["sH"];
+		startTime.Day = schedule["sD"];
+		startTime.Month = schedule["sMth"];
+		startTime.Year = CalendarYrToTm(schedule["sY"].as<int>());
+		endTime.Second = 0;
+		endTime.Minute = schedule["eM"];
+		endTime.Hour = schedule["eH"];
+		endTime.Day = schedule["eD"];
+		endTime.Month = schedule["eMth"];
+		endTime.Year = CalendarYrToTm(schedule["eY"].as<int>());
+		time_t startT = makeTime(startTime);
+		time_t endT = makeTime(endTime);
+		time_t t = now();
+		Serial.println(startT <= t && t < endT ? "Active" : "Not active");
+		return startT <= t && t < endT;
+	}
+	return false;
+}
+
+bool compareTemperatureWithSetTemperature(float temp, float setTemp)
+{
+	if (heaterState)
+	{
+		return temp < setTemp + tempThreshold;
+	}
+	return temp <= setTemp - tempThreshold;
+}
+
 
 void programTemporarSetup()
 {
+	// the sensor setting will be used later, to decide which temperature sensor dictates the set temperature, until i implement that, it does nothing
 	int sensor = 0;
 	float temp = 20.0f;
 	int duration = 30;
 	int option = 0;
 	int sel = 0;
-	if (programTempActiv)
+	if (temporaryScheduleActive)
 	{
-		sensor = programTempSensor;
-		temp = programTempTemperature;
+		//sensor = programTempSensor;
+		temp = temporaryScheduleTemp;
 		duration = -1;
 	}
 	unsigned long previousTime = millis();
@@ -517,20 +634,20 @@ void programTemporarSetup()
 		return;
 	if (option == 0)
 	{
-		programTempActiv = true;
-		programTempSensor = sensor;
-		programTempTemperature = temp;
+		temporaryScheduleActive = true;
+		//programTempSensor = sensor;
+		temporaryScheduleTemp = temp;
 		if (duration != -1)
 		{
 			if (duration == 24*60+30)
-				programTempEnd = -1;
+				temporaryScheduleEnd = -1;
 			else
-				programTempEnd = now() + duration * 60;
+				temporaryScheduleEnd = now() + duration * 60;
 		}
 	}
 	else if (option == 2)
 	{
-		programTempActiv = false;
+		temporaryScheduleActive = false;
 	}
 }
 
@@ -570,10 +687,10 @@ void programTemporarHelper(int sensor, float temp, int duration, int option, int
 	if (duration == -1)
 	{
 		int ptDuration;
-		if (programTempEnd == -1)
+		if (temporaryScheduleEnd == -1)
 			ptDuration = -1;
 		else	
-			ptDuration = (programTempEnd - now())/60;
+			ptDuration = (temporaryScheduleEnd - now())/60;
 		if (ptDuration == -1)
 		{
 			display.print(FPSTR(programTemporarDurationInfiniteString));
@@ -794,79 +911,6 @@ void displayTemp(float temp, int cursorX, int cursorY)
   display.printf_P(PSTR(".%d"), (int)(decimals + 0.5f));
 }
 
-void decideHeaterFate()
-{
-	if (programTempActiv)
-	{
-		Serial.println("program temp activ");
-		Serial.printf("sensor: %d\ntemp: %f\nend: %ld\n", programTempSensor, programTempTemperature, programTempEnd);
-		if (programTempEnd == -1 || now() < programTempEnd)
-		{
-			bool signal = shouldTurnOnHeater(getTemp(programTempSensor), programTempTemperature);
-			sendSignalToHeater(signal);
-			return;
-		}
-		else
-		{
-			programTempActiv = false;
-		}
-	}
-	uint16_t lastPriority = 0;
-	bool signal = false;
-	int lastIndex = 0;
-	lastIndex = programString.indexOf(':', lastIndex);
-	while (lastIndex != -1)
-	{
-		lastIndex++;
-		int endIndex = programString.indexOf('}', lastIndex);
-		String str = programString.substring(lastIndex, endIndex + 1);
-		lastIndex = programString.indexOf(':', endIndex);
-		DynamicJsonDocument doc(400); // marime suficienta pentru un program mare (adica unul care nu se repeta si cu toate smecheriile)
-		deserializeJson(doc, str);	// se va opri din deserializat cand se va termina obiectul (cand da peste '}'), deci putem continua
-		serializeJson(doc, Serial);
-		JsonObject program = doc.as<JsonObject>();
-		if (isActive(program))
-		{
-			float _temp = getTemp(program["sensor"]);
-			if (isnan(_temp)) // daca temperatura nu poate fi citita (eroare de senzor probabil), sarim peste program
-				continue;
-			if (program["repeat"] == "None")
-			{
-				// este activ un program care nu se repeta, acesta are prioritate absoluta deci oprim aici while-ul
-				signal = shouldTurnOnHeater(_temp, program["setTemp"]);
-				Serial.println("\n\nOne-time program active: ");
-				serializeJson(program, Serial);
-				break;
-			}
-			else if (program["priority"].as<int>() >= lastPriority)
-			{
-				signal = shouldTurnOnHeater(_temp, program["setTemp"]);
-				lastPriority = program["priority"];
-				Serial.printf("lastPriority changed: %d\n", lastPriority);
-			}
-		}
-	}
-	Serial.printf("Highest priority: %d\n", lastPriority);
-	sendSignalToHeater(signal);
-}
-
-float getTemp(int sensor)
-{
-	// pentru test
-	//return virtualGetTemp(sensor);
-	if (sensor == 0)
-	{
-		Serial.printf("temp: %fC", temperature);
-		return temperature;
-	}
-	if (sensor > maxNumberOfSensors || sensor < 1)
-	{
-		Serial.println("Error sensor value out of bounds");
-		return NAN;
-	}
-	Serial.printf("temp: %fC", temperatures[sensor]);
-	return temperatures[sensor];
-}
 
 void updateTemp()
 {
@@ -911,81 +955,6 @@ bool shouldTurnOnHeater(float temp, float setTemp)
 		return temp < setTemp + tempThreshold;
 	}
 	return temp <= setTemp - tempThreshold;
-}
-
-bool isActive(const JsonObject &program)
-{
-	if (program["repeat"] == "Daily")
-	{
-		Serial.println("Daily!");
-		/*Serial.println(program["sH"].as<int>() * 60 + program["sM"].as<int>());
-		Serial.println(hour() * 60 + minute());
-		Serial.println(program["eH"].as<int>() * 60 + program["eM"].as<int>());*/
-		if (program["sH"].as<int>() * 60 + program["sM"].as<int>() <= hour() * 60 + minute() && hour() * 60 + minute() < program["eH"].as<int>() * 60 + program["eM"].as<int>())
-		{
-			Serial.println("active!");
-			return true;
-		}
-		Serial.println("not active!");
-		return false;
-	}
-	else if (program["repeat"] == "Weekly")
-	{
-		Serial.println("Weekly!");
-		int wDay = 0;
-		if (program["weekDay"].as<String>() == "Sunday")
-			wDay = 1;
-		else if (program["weekDay"].as<String>() == "Monday")
-			wDay = 2;
-		else if (program["weekDay"].as<String>() == "Tuesday")
-			wDay = 3;
-		else if (program["weekDay"].as<String>() == "Wednesday")
-			wDay = 4;
-		else if (program["weekDay"].as<String>() == "Thursday")
-			wDay = 5;
-		else if (program["weekDay"].as<String>() == "Friday")
-			wDay = 6;
-		else if (program["weekDay"].as<String>() == "Saturday")
-			wDay = 7;
-
-		if (wDay == weekday())
-		{
-			if (program["sH"].as<int>() * 60 + program["sM"].as<int>() <= hour() * 60 + minute() && hour() * 60 + minute() < program["eH"].as<int>() * 60 + program["eM"].as<int>())
-			{
-				Serial.println("active!");
-				return true;
-			}
-		}
-		Serial.println("not active!");
-		return false;
-	}
-	else
-	{
-		Serial.println("None!");
-		TimeElements start;
-		TimeElements end;
-		start.Second = 0;
-		start.Minute = program["sM"].as<int>();
-		start.Hour = program["sH"].as<int>();
-		start.Day = program["sD"].as<int>();
-		start.Month = program["sMth"].as<int>();
-		start.Year = CalendarYrToTm(program["sY"].as<int>());
-		end.Second = 0;
-		end.Minute = program["eM"].as<int>();
-		end.Hour = program["eH"].as<int>();
-		end.Day = program["eD"].as<int>();
-		end.Month = program["eMth"].as<int>();
-		end.Year = CalendarYrToTm(program["eY"].as<int>());
-		time_t startT = makeTime(start);
-		time_t endT = makeTime(end);
-		if (startT <= now() && now() < endT)
-		{
-			Serial.println("active!");
-			return true;
-		}
-		Serial.println("not active!");
-		return false;
-	}
 }
 
 void manualTimeSetup()
