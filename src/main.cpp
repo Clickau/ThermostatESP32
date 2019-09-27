@@ -107,8 +107,8 @@ enum class Button
 {
 	None = -1,
 	Enter = 0,
-	Sus = 1,
-	Jos = 2
+	Up = 1,
+	Down = 2
 };
 
 bool heaterState = false;
@@ -209,7 +209,6 @@ void updateHum();
 void manualTimeSetup();
 void simpleDisplay(const String &str);
 void manualTimeHelper(int h, int m, int d, int mth, int y, int sel);
-void virtualManualTimeSetup(int h, int m, int d, int mth, int y);
 void setupWifiSetup();
 void wifiSetupHandleRoot();
 void wifiSetupHandlePost();
@@ -227,9 +226,8 @@ void virtualDisplayStartupMenu(int highlightedOption);
 void sendSignalToHeater(bool _on);
 void virtualSendSignalToHeater(bool _on);
 void UpdateDisplay();
-void programTemporarSetup();
-void programTemporarHelper(int sensor, float temp, int duration, int option, int sel);
-void virtualprogramTemporarHelper(int sensor, float temp, int duration, int option, int sel);
+void temporaryScheduleSetup();
+void temporaryScheduleHelper(int sensor, float temp, int duration, int option, int sel);
 void displayTemp(float temp, int cursorX, int cursorY);
 void displayClock(int hour, int min, int cursorX, int cursorY);
 void displayDate(int day, int mth, int year, int wDay, int cursorX, int cursorY);
@@ -242,19 +240,18 @@ bool compareTemperatureWithSetTemperature(float temp, float setTemp);
 
 void setup()
 {
-	// normal operation setup
-	Serial.begin(115200); // in serial monitor, trebuie sa fie activata optiunea Both NL & CR
+	Serial.begin(115200); // in serial monitor, use the CR & NL option for line ending (probably not mandatory)
 	display.clearDisplay(); // gets rid of the adafruit logo at the beginning
 	display.begin();
 	display.setContrast(displayContrast);
-	// oprim central la reset, pentru orice eventualitate
-	sendSignalToHeater(false);
-	//functionare normala setup
+	sendSignalToHeater(false); // we stop the heater at startup
+
+	// normal operation setup
 	dht.begin();
 	Serial.println("Mod selectat Functionare Normala");
 	if (!connectSTAMode())
 	{
-		// eroare la conectarea la wifi
+		// error connecting to wifi
 		Serial.println(FPSTR(ErrorWifiConnect));
 		simpleDisplay(String(FPSTR(ErrorWifiConnect)));
 		wifiWorking = false;
@@ -263,19 +260,21 @@ void setup()
 	NTP.setInterval(NTPInterval, NTPInterval);
 	if (wifiWorking)
 	{
+		// if wifi works, we try to get NTP time
 		Serial.println("trying to get time");
 		int i = 0;
-		while (NTP.getLastNTPSync() == 0 && i < timesTryNTP) // daca nu reusim sa descarcam prima data timpul, incercam inca de timesTryNTP ori
+		while (NTP.getLastNTPSync() == 0 && i < timesTryNTP) // we try timesTryNTP times, before giving up
 		{
 			Serial.printf("attempt nr %d\n", i);
-			delay(500); // asteptam 500ms pana cand incercam din nou
+			delay(500); // wait 500 ms
 			time_t t = NTP.getTime();
 			if (t != 0)
 				setTime(t);
 			i++;
-			// aici exista o problema: daca deconectez cablul de internet din router si il conectez in timpul acestui while (pentru test), uneori esp-ul este resetat de wdt (hardware) - investigat
+			// problem here: if i disconnect the internet cable from the router and reconnect it during the while, sometimes the esp is reset by the hardware wdt (??)
 		}
-		if (NTP.getLastNTPSync() == 0) // daca nu am reusit, intram in modul manual
+		// if we didn't succeed, we enter manual time setup
+		if (NTP.getLastNTPSync() == 0)
 		{
 			NTPWorking = false;
 			Serial.println(FPSTR(ErrorNTP));
@@ -286,6 +285,7 @@ void setup()
 	}
 	else
 	{
+		// bypassed NTP download because wifi doesn't work
 		Serial.println("bypassed ntp because wifi doesnt work");
 		NTPWorking = false;
 		delay(3000);
@@ -293,6 +293,7 @@ void setup()
 	}
 	Serial.println("got time:");
 	Serial.println(NTP.getTimeDateString());
+
 	display.clearDisplay();
 	display.setCursor(0, 0);
 	display.println(FPSTR(GotTime));
@@ -373,10 +374,10 @@ void loop()
 		{
 			firebaseWorking = firebaseClient.initializeStream();
 		}
-		Serial.printf("wifiWorking: %d", wifiWorking);
-		Serial.printf("NTPWorking: %d", NTPWorking);
-		Serial.printf("humWorking: %d", humWorking);
-		Serial.printf("tempWorking: %d", tempWorking);
+		Serial.printf("wifiWorking:%d ", wifiWorking);
+		Serial.printf("NTPWorking:%d ", NTPWorking);
+		Serial.printf("humWorking:%d ", humWorking);
+		Serial.printf("tempWorking: %d\n", tempWorking);
 	}
 	// we update temperature, humidity every intervalUpdateTemperature milliseconds, and we reevaluate the schedule
 	if (millis() - lastTemperatureUpdate >= intervalUpdateTemperature)
@@ -384,6 +385,8 @@ void loop()
 		lastTemperatureUpdate = millis();
 		updateTemp();
 		updateHum();
+		// if a temporary schedule is active, we ignore the normal schedule and follow it
+		// otherwise, we evaluate the normal schedule
 		if (temporaryScheduleActive)
 		{
 			if (now() < temporaryScheduleEnd || temporaryScheduleEnd == -1)
@@ -393,6 +396,7 @@ void loop()
 			}
 			else
 			{
+				// if the temporary schedule has expired, we deactivate it
 				temporaryScheduleActive = false;
 			}
 			
@@ -409,7 +413,7 @@ void loop()
 	if (pressed == Button::Enter)
 	{
 		Serial.println("enter was pressed");
-		programTemporarSetup();
+		temporaryScheduleSetup();
 	}
 	UpdateDisplay();
 }
@@ -518,8 +522,7 @@ bool compareTemperatureWithSetTemperature(float temp, float setTemp)
 	return temp <= setTemp - tempThreshold;
 }
 
-
-void programTemporarSetup()
+void temporaryScheduleSetup()
 {
 	// the sensor setting will be used later, to decide which temperature sensor dictates the set temperature, until i implement that, it does nothing
 	int sensor = 0;
@@ -535,7 +538,7 @@ void programTemporarSetup()
 	}
 	unsigned long previousTime = millis();
 	bool autoselect = true;
-	programTemporarHelper(sensor, temp, duration, option, sel);
+	temporaryScheduleHelper(sensor, temp, duration, option, sel);
 	while (sel < 4)
 	{
 		Button pressed = buttonPressed();
@@ -549,7 +552,7 @@ void programTemporarSetup()
 			sel++;
 			autoselect = false;
 		}
-		else if (pressed == Button::Sus)
+		else if (pressed == Button::Up)
 		{
 			autoselect = false;
 			switch (sel)
@@ -589,7 +592,7 @@ void programTemporarSetup()
 				break;
 			}
 		}
-		else if (pressed == Button::Jos)
+		else if (pressed == Button::Down)
 		{
 			autoselect = false;
 			switch (sel)
@@ -628,7 +631,7 @@ void programTemporarSetup()
 				break;
 			}
 		}
-		programTemporarHelper(sensor, temp, duration, option, sel);
+		temporaryScheduleHelper(sensor, temp, duration, option, sel);
 	}
 	if (option == 1 || autoselect)
 		return;
@@ -651,7 +654,8 @@ void programTemporarSetup()
 	}
 }
 
-void programTemporarHelper(int sensor, float temp, int duration, int option, int sel)
+// helper function that displays the selected values on the screen
+void temporaryScheduleHelper(int sensor, float temp, int duration, int option, int sel)
 {
 	display.clearDisplay();
 	display.setCursor(4, 0);
@@ -760,32 +764,6 @@ void programTemporarHelper(int sensor, float temp, int duration, int option, int
 	}
 	display.setTextColor(BLACK);
 	display.display();
-	//virtualprogramTemporarHelper(sensor, temp, duration, option, sel);
-}
-
-void virtualprogramTemporarHelper(int sensor, float temp, int duration, int option, int sel)
-{
-	Serial.println(FPSTR(programTemporarString));
-	Serial.println();
-	Serial.printf_P(programTemporarSensorString, sensor);
-	Serial.printf_P(programTemporarTempString, temp);
-	if (duration < 60)
-	{
-		Serial.printf_P(programTemporarDuration1String, duration);
-	}
-	else
-	{
-		if (duration == 24 * 60 + 30)
-			Serial.print(FPSTR(programTemporarDurationInfiniteString));
-		else
-			Serial.printf_P(programTemporarDuration2String, ((float)duration) / 60);
-	}
-	if (option == 0)
-		Serial.println(FPSTR(programTemporarOkString));
-	else if (option == 1)
-		Serial.println(FPSTR(programTemporarCancelString));
-	else if (option == 2)
-		Serial.println(FPSTR(programTemporarDeleteString));
 }
 
 void UpdateDisplay()
@@ -801,6 +779,7 @@ void UpdateDisplay()
   display.display();
 }
 
+// cursorX and cursorY are the location of the top left corner
 void displayErrors(int cursorX, int cursorY)
 {
   display.setCursor(cursorX, cursorY);
@@ -838,7 +817,7 @@ void displayErrors(int cursorX, int cursorY)
   }
 }
 
-//cursorX and cursorY are the location of the top left corner
+// cursorX and cursorY are the location of the top left corner
 void displayHumidity(int hum, int cursorX, int cursorY)
 {
   display.setCursor(cursorX, cursorY);
@@ -852,16 +831,16 @@ void displayHumidity(int hum, int cursorX, int cursorY)
   display.printf_P(displayHumidityString, hum);
 }
 
-//cursorX and cursorY are the location of the top left corner
-//only displays the flame if the heater is on
+// cursorX and cursorY are the location of the top left corner
+// only displays the flame if the heater is on
 void displayFlame(const uint8_t* flameBitmap, int cursorX, int cursorY, int width, int height)
 {
   if (heaterState)
     display.drawBitmap(cursorX, cursorY, flameBitmap, width, height, BLACK);
 }
 
-//cursorX and cursorY are the location of the top left corner
-//sunday is wDay one
+// cursorX and cursorY are the location of the top left corner
+// sunday is wDay one
 void displayDate(int day, int mth, int year, int wDay, int cursorX, int cursorY)
 {
   display.setCursor(cursorX, cursorY);
@@ -872,7 +851,8 @@ void displayDate(int day, int mth, int year, int wDay, int cursorX, int cursorY)
   display.printf_P(displayDateLine2String, mth, year);
 }
 
-//cursorX and cursorY are the location of the middle left point
+// cursorX and cursorY are the location of the middle left point
+// it uses the DSEG7 Classic Bold font
 void displayClock(int hour, int min, int cursorX, int cursorY)
 {
   display.setCursor(cursorX, cursorY);
@@ -881,7 +861,7 @@ void displayClock(int hour, int min, int cursorX, int cursorY)
   display.printf_P(displayClockFormatString, hour, min);
 }
 
-//cursorX and cursorY are the location of the top left corner
+// cursorX and cursorY are the location of the top left corner
 // needs at least 2 free pixels above(for the degree symbol and C)
 void displayTemp(float temp, int cursorX, int cursorY)
 {
@@ -911,7 +891,6 @@ void displayTemp(float temp, int cursorX, int cursorY)
   display.printf_P(PSTR(".%d"), (int)(decimals + 0.5f));
 }
 
-
 void updateTemp()
 {
 	sensors_event_t event;
@@ -935,28 +914,7 @@ void updateHum()
 	//Serial.printf("humidity: %d\n", humidity);
 }
 
-float virtualGetTemp(int sensor = 0)
-{
-	Serial.print("Enter temperature for sensor ");
-	Serial.println(sensor);
-	while (!Serial.available())
-		delay(100);
-	String temperature = Serial.readStringUntil('\r');
-	if (Serial.peek() == '\n')
-		Serial.read();
-	Serial.println(temperature.toFloat());
-	return temperature.toFloat();
-}
-
-bool shouldTurnOnHeater(float temp, float setTemp)
-{
-	if (heaterState)
-	{
-		return temp < setTemp + tempThreshold;
-	}
-	return temp <= setTemp - tempThreshold;
-}
-
+// prompts the user to enter the current date and time
 void manualTimeSetup()
 {
 	int manualTime[] = {0, 0, 1, 1, 2019}; // int h=0, m=0, d=1, mth=1, y=2010;
@@ -969,13 +927,13 @@ void manualTimeSetup()
 		Button lastPressed = buttonPressed();
 		switch (lastPressed)
 		{
-		case Button::Sus:
+		case Button::Up:
 			if (manualTime[sel] < maxValue[sel])
 				manualTime[sel]++;
 			else
 				manualTime[sel] = minValue[sel];
 			break;
-		case Button::Jos:
+		case Button::Down:
 			if (manualTime[sel] > minValue[sel])
 				manualTime[sel]--;
 			else
@@ -995,6 +953,7 @@ void manualTimeSetup()
 	setTime(manualTime[0], manualTime[1], 0, manualTime[2], manualTime[3], manualTime[4]);
 }
 
+// helper function that clears the display and prints the String parameter in the top left corner
 void simpleDisplay(const String &str)
 {
 	display.clearDisplay();
@@ -1004,7 +963,7 @@ void simpleDisplay(const String &str)
 	display.display();
 }
 
-// functie ajutatoare. parametrii: ora, minutul, ziua, luna, anul si care dintre acestea e selectata
+// helper function that displays the current selected date and time in manual time mode
 void manualTimeHelper(int h, int m, int d, int mth, int y, int sel)
 {
 	String sh = "", sm = "", sd = "", smth = "", sy;
@@ -1093,62 +1052,15 @@ void manualTimeHelper(int h, int m, int d, int mth, int y, int sel)
 	display.display();
 }
 
-void virtualManualTimeSetup(int h, int m, int d, int mth, int y)
-{
-	// virtual
-	Serial.println("Enter hour:");
-	while (!(Serial.available() > 0))
-	{
-		delay(10);
-	}
-	h = Serial.readStringUntil('\r').toInt();
-	if (Serial.peek() == '\n')
-		Serial.read();
-	Serial.println(h);
-	Serial.println("Enter minute:");
-	while (!(Serial.available() > 0))
-	{
-		delay(10);
-	}
-	m = Serial.readStringUntil('\r').toInt();
-	if (Serial.peek() == '\n')
-		Serial.read();
-	Serial.println(m);
-	Serial.println("Enter day:");
-	while (!(Serial.available() > 0))
-	{
-		delay(10);
-	}
-	d = Serial.readStringUntil('\r').toInt();
-	if (Serial.peek() == '\n')
-		Serial.read();
-	Serial.println(d);
-	Serial.println("Enter month:");
-	while (!(Serial.available() > 0))
-	{
-		delay(10);
-	}
-	mth = Serial.readStringUntil('\r').toInt();
-	if (Serial.peek() == '\n')
-		Serial.read();
-	Serial.println(mth);
-	Serial.println("Enter year:");
-	while (!(Serial.available() > 0))
-	{
-		delay(10);
-	}
-	y = Serial.readStringUntil('\r').toInt();
-	if (Serial.peek() == '\n')
-		Serial.read();
-	Serial.println(y);
-}
-
+// gets the wifi login credentials from the flash memory
 void getCredentials(String &ssid, String &password)
 {
 	ssid = "Cosmin2.4";
 	password = "Bug1!1o605";
 }
 
+// connects to wifi
+// if it can't connect in waitingTimeConnectWifi milliseconds, it aborts
 bool connectSTAMode()
 {
 	Serial.println("trying to connect to wifi");
@@ -1172,25 +1084,22 @@ bool connectSTAMode()
 	return true;
 }
 
+// if no button is pressed, returns Button::None
+// if a button is pressed, it returns Button::Enter, Button::Up or Button::Down respectively
 Button buttonPressed()
 {
-	// de implementat - daca nu e apasat nimic returneaza -1 (Button.None)
-	//                - daca e apasat enter, returneaza 0 (Button.Enter)
-	//                - daca e apasat sageata sus, returneaza 1 (Button.Sus)
-	//                - daca e apasat sageata jos, returneaza 2 (Button.Jos)
-	// temporar pentru test
+	// temporary for testing
 	return virtualButtonPressed();
 }
 
+// gets the button from the Serial
 Button virtualButtonPressed()
 {
-	// metoda pentru a testa functionalitate butoanelor, din software
-	// citeste valoarea butoanelor din serial monitor: -1 daca stringul citit e gol sau nu se primeste niciun string, 0 daca se trimite 0,ENTER sau enter, 1 daca se trimite 1, sus sau SUS, 2 daca se trimite 2, jos sau JOS
 	if (!(Serial.available() > 0))
-		return Button::None;				   // daca nu se primeste niciun string, presupunem ca nu s-a apasat niciun buton
-	String str = Serial.readStringUntil('\r'); // citeste string-ul pana la \r
+		return Button::None;// if no string is received, we return Button::None
+	String str = Serial.readStringUntil('\r');
 	if (Serial.peek() == '\n')
-		Serial.read(); // citeste si caracterul \n pentru a evita confuzia
+		Serial.read();// also reads the \n character at the end, if it exists
 	if (str == "0" || str == "ENTER" || str == "enter")
 	{
 		Serial.println("Enter was pressed");
@@ -1199,23 +1108,24 @@ Button virtualButtonPressed()
 	if (str == "1" || str == "SUS" || str == "sus")
 	{
 		Serial.println("Sus was pressed");
-		return Button::Sus;
+		return Button::Up;
 	}
 	if (str == "2" || str == "JOS" || str == "jos")
 	{
 		Serial.println("Jos was pressed");
-		return Button::Jos;
+		return Button::Down;
 	}
 	return Button::None;
 }
 
 void sendSignalToHeater(bool _on)
 {
-	// de implementat
+	// to be implemented
 	heaterState = _on;
 	virtualSendSignalToHeater(_on);
 }
 
+// prints the desired heater state in the Serial
 void virtualSendSignalToHeater(bool _on)
 {
 	Serial.print("Heater: ");
