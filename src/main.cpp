@@ -53,6 +53,7 @@ const int NTPInterval = 900; // the time interval after which we update the time
 const int8_t timesTryNTP = 3; // how many times we try to download the time from the internet, before we either enter manual mode, if it happens at startup, or we show an NTP error
 const char GotTime[] PROGMEM = "Got Time:";
 const char manualTimeString[] PROGMEM = "Manual Time";
+const char manualTimeFormatString[] PROGMEM = "%.2d"; // format string used in the manual time menu for displaying the hour, minute, date and month; just puts a 0 in front of them if they are less than 2 digits
 const char db_path[] PROGMEM = "arduino-test-8c103.firebaseio.com"; // the URL of the Firebase
 const char auth[] PROGMEM = "wwy3KljIFEEM5Cv4nEbVGSkeKXG1rcooeKrUPmjO"; // Firebase secret key
 const char programPath[] PROGMEM = "/Program"; // the path to the schedules
@@ -963,6 +964,7 @@ void simpleDisplay(const String &str)
 	display.display();
 }
 
+// helper function that displays the current selected date and time in manual time mode
 void manualTimeHelper(int h, int m, int d, int mth, int y, int sel)
 {
 	display.clearDisplay();
@@ -975,50 +977,50 @@ void manualTimeHelper(int h, int m, int d, int mth, int y, int sel)
 	if (sel == 0)
 	{
 		display.setTextColor(WHITE, BLACK);
-		display.printf("%.2d", h);
+		display.printf_P(manualTimeFormatString, h);
 		display.setTextColor(BLACK);
 	}
 	else
 	{
 		display.setTextColor(BLACK);
-		display.printf("%.2d", h);
+		display.printf_P(manualTimeFormatString, h);
 	}
 	display.print(':');
 	if (sel == 1)
 	{
 		display.setTextColor(WHITE, BLACK);
-		display.printf("%.2d", m);
+		display.printf_P(manualTimeFormatString, m);
 		display.setTextColor(BLACK);
 	}
 	else
 	{
 		display.setTextColor(BLACK);
-		display.printf("%.2d", m);
+		display.printf_P(manualTimeFormatString, m);
 	}
 
 	display.setCursor(14, 30);
 	if (sel == 2)
 	{
 		display.setTextColor(WHITE, BLACK);
-		display.printf("%.2d", d);
+		display.printf_P(manualTimeFormatString, d);
 		display.setTextColor(BLACK);
 	}
 	else
 	{
 		display.setTextColor(BLACK);
-		display.printf("%.2d", d);
+		display.printf_P(manualTimeFormatString, d);
 	}
 	display.print('.');
 	if (sel == 3)
 	{
 		display.setTextColor(WHITE, BLACK);
-		display.printf("%.2d", mth);
+		display.printf_P(manualTimeFormatString, mth);
 		display.setTextColor(BLACK);
 	}
 	else
 	{
 		display.setTextColor(BLACK);
-		display.printf("%.2d", mth);
+		display.printf_P(manualTimeFormatString, mth);
 	}
 	display.print('.');
 	if (sel == 4)
@@ -1031,95 +1033,6 @@ void manualTimeHelper(int h, int m, int d, int mth, int y, int sel)
 	{
 		display.setTextColor(BLACK);
 		display.println(y);
-	}
-
-	display.display();
-}
-
-// helper function that displays the current selected date and time in manual time mode
-void old_manualTimeHelper(int h, int m, int d, int mth, int y, int sel)
-{
-	String sh = "", sm = "", sd = "", smth = "", sy;
-	if (h < 10)
-		sh += "0";
-	sh += String(h);
-	if (m < 10)
-		sm += "0";
-	sm += String(m);
-	if (d < 10)
-		sd += "0";
-	sd += String(d);
-	if (mth < 10)
-		smth += "0";
-	smth += String(mth);
-	sy = String(y);
-
-	display.clearDisplay();
-	display.setTextSize(1);
-	display.setTextColor(BLACK);
-	display.setCursor(10, 0);
-	display.println(FPSTR(manualTimeString));
-
-	display.setCursor(27, 15);
-	if (sel == 0)
-	{
-		display.setTextColor(WHITE, BLACK);
-		display.print(sh);
-		display.setTextColor(BLACK);
-	}
-	else
-	{
-		display.setTextColor(BLACK);
-		display.print(sh);
-	}
-	display.print(':');
-	if (sel == 1)
-	{
-		display.setTextColor(WHITE, BLACK);
-		display.println(sm);
-		display.setTextColor(BLACK);
-	}
-	else
-	{
-		display.setTextColor(BLACK);
-		display.println(sm);
-	}
-
-	display.setCursor(14, 30);
-	if (sel == 2)
-	{
-		display.setTextColor(WHITE, BLACK);
-		display.print(sd);
-		display.setTextColor(BLACK);
-	}
-	else
-	{
-		display.setTextColor(BLACK);
-		display.print(sd);
-	}
-	display.print('.');
-	if (sel == 3)
-	{
-		display.setTextColor(WHITE, BLACK);
-		display.print(smth);
-		display.setTextColor(BLACK);
-	}
-	else
-	{
-		display.setTextColor(BLACK);
-		display.print(smth);
-	}
-	display.print('.');
-	if (sel == 4)
-	{
-		display.setTextColor(WHITE, BLACK);
-		display.println(sy);
-		display.setTextColor(BLACK);
-	}
-	else
-	{
-		display.setTextColor(BLACK);
-		display.println(sy);
 	}
 
 	display.display();
@@ -1129,7 +1042,7 @@ void old_manualTimeHelper(int h, int m, int d, int mth, int y, int sel)
 void getCredentials(String &ssid, String &password)
 {
 	ssid = "***REMOVED***";
-	password = "a***REMOVED***";
+	password = "***REMOVED***";
 }
 
 // connects to wifi
