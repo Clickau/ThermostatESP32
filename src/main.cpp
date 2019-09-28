@@ -56,7 +56,7 @@ const char manualTimeString[] PROGMEM = "Manual Time";
 const char manualTimeFormatString[] PROGMEM = "%.2d"; // format string used in the manual time menu for displaying the hour, minute, date and month; just puts a 0 in front of them if they are less than 2 digits
 const char db_path[] PROGMEM = "arduino-test-8c103.firebaseio.com"; // the URL of the Firebase
 const char auth[] PROGMEM = "wwy3KljIFEEM5Cv4nEbVGSkeKXG1rcooeKrUPmjO"; // Firebase secret key
-const char programPath[] PROGMEM = "/Program"; // the path to the schedules
+const char schedulePath[] PROGMEM = "/Program"; // the path to the schedules
 const char firebaseFingerprint[] PROGMEM = "B6 F5 80 C8 B1 DA 61 C1 07 9D 80 42 D8 A9 1F AF 9F C8 96 7D";
 const float tempThreshold = 0.5f; // the temperature difference needed between the set temperature and the current room temperature to trigger the heater
 const uint8_t timesTryFirebase = 2; // how many times we try to download the schedules from FB, before showing error
@@ -65,17 +65,17 @@ const uint8_t dhtPin = 12; // pin for the One Wire communication with DHT module
 const uint8_t dhtType = DHT22; // module type
 const unsigned long intervalUpdateTemperature = 10000; // the interval after which we update temperature
 const int maxNumberOfSensors = 7; // de scapat de senzori externi deocamdata
-const char programTemporarString[] PROGMEM = "Program Temp.";
-const char programTemporarSensorString[] PROGMEM = "Sensor:%d\n";
-const char programTemporarTempString[] PROGMEM = "Temp:%.1fC\n";
-const char programTemporarDuration1String[] PROGMEM = "Duration:%dm\n";
-const char programTemporarDuration2String[] PROGMEM = "Duration:%.1fh\n";
-const char programTemporarDurationInfiniteString[] PROGMEM = "Duration:inf.\n";
-const char programTemporarOkString[] PROGMEM = "OK";
-const char programTemporarCancelString[] PROGMEM = "CANCEL";
-const char programTemporarDeleteString[] PROGMEM = "DEL";
-const unsigned long waitingTimeInProgramTemporarMenu = 5000; // if, after opening the temporary schedule menu, no button is pressed for this many milliseconds, we go back to normal operation
-const float programTemporarTempResolution = 0.5f; // the minimum increment in temperature in the temporary schedule menu, for example if it if 0.5f, you can set the target temperature to 20 degrees or 20.5, but not 20.2
+const char temporaryScheduleString[] PROGMEM = "Program Temp.";
+const char temporaryScheduleSensorString[] PROGMEM = "Sensor:%d\n";
+const char temporaryScheduleTempString[] PROGMEM = "Temp:%.1fC\n";
+const char temporaryScheduleDuration1String[] PROGMEM = "Duration:%dm\n";
+const char temporaryScheduleDuration2String[] PROGMEM = "Duration:%.1fh\n";
+const char temporaryScheduleDurationInfiniteString[] PROGMEM = "Duration:inf.\n";
+const char temporaryScheduleOkString[] PROGMEM = "OK";
+const char temporaryScheduleCancelString[] PROGMEM = "CANCEL";
+const char temporaryScheduleDeleteString[] PROGMEM = "DEL";
+const unsigned long waitingTimeInTemporaryScheduleMenu = 5000; // if, after opening the temporary schedule menu, no button is pressed for this many milliseconds, we go back to normal operation
+const float temporaryScheduleTempResolution = 0.5f; // the minimum increment in temperature in the temporary schedule menu, for example if it if 0.5f, you can set the target temperature to 20 degrees or 20.5, but not 20.2
 const char displayHumidityNotAvailableString[] PROGMEM = "N\\A"; //displays 'N\A' if the humidity can't be read
 const char displayHumidityString[] PROGMEM = "%.2d%%"; //the %d is a placeholder for the relative humidity (integer), and %% just writes %
 const char displayDateLine1String[] PROGMEM = "%s. %d\n"; //the %s is a placeholder for the short weekday (e.g. Mon) and %d for the date (e.g. 2)
@@ -173,7 +173,7 @@ public:
 		setReuse(true);
 		setFollowRedirects(true);
 		// we open a secure connection
-		begin(String(F("https://")) + FPSTR(db_path) + FPSTR(programPath) + F(".json?auth=") + FPSTR(auth), String(FPSTR(firebaseFingerprint)));
+		begin(String(F("https://")) + FPSTR(db_path) + FPSTR(schedulePath) + F(".json?auth=") + FPSTR(auth), String(FPSTR(firebaseFingerprint)));
 		addHeader("Accept", "text/event-stream");
 		int status = GET();
 
@@ -329,7 +329,7 @@ void loop()
 			{
 				Serial.printf("attempt nr %d\n", i);
 				HTTPClient getHttp;
-				getHttp.begin(String(F("https://")) + FPSTR(db_path) + FPSTR(programPath) + F(".json?auth=") + FPSTR(auth), String(FPSTR(firebaseFingerprint)));
+				getHttp.begin(String(F("https://")) + FPSTR(db_path) + FPSTR(schedulePath) + F(".json?auth=") + FPSTR(auth), String(FPSTR(firebaseFingerprint)));
 				result = getHttp.GET();
 				if (result != HTTP_CODE_OK)
 				{
@@ -545,7 +545,7 @@ void temporaryScheduleSetup()
 		Button pressed = buttonPressed();
 		if (pressed == Button::None)
 		{
-			if (autoselect && millis() - previousTime > waitingTimeInProgramTemporarMenu)
+			if (autoselect && millis() - previousTime > waitingTimeInTemporaryScheduleMenu)
 				break;
 		}
 		if (pressed == Button::Enter)
@@ -566,7 +566,7 @@ void temporaryScheduleSetup()
 				break;
 			case 1:
 				if (temp < 35.0f)
-					temp += programTemporarTempResolution;
+					temp += temporaryScheduleTempResolution;
 				else
 					temp = 5.0f;
 				break;
@@ -606,7 +606,7 @@ void temporaryScheduleSetup()
 				break;
 			case 1:
 				if (temp > 5.0f)
-					temp -= programTemporarTempResolution;
+					temp -= temporaryScheduleTempResolution;
 				else
 					temp = 35.0f;
 				break;
@@ -660,7 +660,7 @@ void temporaryScheduleHelper(int sensor, float temp, int duration, int option, i
 {
 	display.clearDisplay();
 	display.setCursor(4, 0);
-	display.println(FPSTR(programTemporarString));
+	display.println(FPSTR(temporaryScheduleString));
 	display.println();
 
 	if (sel == 0)
@@ -671,7 +671,7 @@ void temporaryScheduleHelper(int sensor, float temp, int duration, int option, i
 	{
 		display.setTextColor(BLACK);
 	}
-	display.printf_P(programTemporarSensorString, sensor);
+	display.printf_P(temporaryScheduleSensorString, sensor);
 	if (sel == 1)
 	{
 		display.setTextColor(WHITE, BLACK);
@@ -680,7 +680,7 @@ void temporaryScheduleHelper(int sensor, float temp, int duration, int option, i
 	{
 		display.setTextColor(BLACK);
 	}
-	display.printf_P(programTemporarTempString, temp);
+	display.printf_P(temporaryScheduleTempString, temp);
 	if (sel == 2)
 	{
 		display.setTextColor(WHITE, BLACK);
@@ -698,27 +698,27 @@ void temporaryScheduleHelper(int sensor, float temp, int duration, int option, i
 			ptDuration = (temporaryScheduleEnd - now())/60;
 		if (ptDuration == -1)
 		{
-			display.print(FPSTR(programTemporarDurationInfiniteString));
+			display.print(FPSTR(temporaryScheduleDurationInfiniteString));
 		}
 		else if (ptDuration < 60)
 		{
-			display.printf_P(programTemporarDuration1String, ptDuration);
+			display.printf_P(temporaryScheduleDuration1String, ptDuration);
 		}
 		else 
 		{
-			display.printf_P(programTemporarDuration2String, ((float)ptDuration) / 60);
+			display.printf_P(temporaryScheduleDuration2String, ((float)ptDuration) / 60);
 		}
 	}
 	else if (duration < 60)
 	{
-		display.printf_P(programTemporarDuration1String, duration);
+		display.printf_P(temporaryScheduleDuration1String, duration);
 	}
 	else
 	{
 		if (duration == 24 * 60 + 30)
-			display.print(FPSTR(programTemporarDurationInfiniteString));
+			display.print(FPSTR(temporaryScheduleDurationInfiniteString));
 		else
-			display.printf_P(programTemporarDuration2String, ((float)duration) / 60);
+			display.printf_P(temporaryScheduleDuration2String, ((float)duration) / 60);
 	}
 	if (sel == 3)
 	{
@@ -730,7 +730,7 @@ void temporaryScheduleHelper(int sensor, float temp, int duration, int option, i
 		{
 			display.setTextColor(BLACK);
 		}
-		display.print(FPSTR(programTemporarOkString));
+		display.print(FPSTR(temporaryScheduleOkString));
 		display.setTextColor(BLACK);
 		display.write(' ');
 		if (option == 1)
@@ -741,7 +741,7 @@ void temporaryScheduleHelper(int sensor, float temp, int duration, int option, i
 		{
 			display.setTextColor(BLACK);
 		}
-		display.print(FPSTR(programTemporarCancelString));
+		display.print(FPSTR(temporaryScheduleCancelString));
 		display.setTextColor(BLACK);
 		display.write(' ');
 		if (option == 2)
@@ -752,16 +752,16 @@ void temporaryScheduleHelper(int sensor, float temp, int duration, int option, i
 		{
 			display.setTextColor(BLACK);
 		}
-		display.println(FPSTR(programTemporarDeleteString));
+		display.println(FPSTR(temporaryScheduleDeleteString));
 	}
 	else
 	{
 		display.setTextColor(BLACK);
-		display.print(FPSTR(programTemporarOkString));
+		display.print(FPSTR(temporaryScheduleOkString));
 		display.write(' ');
-		display.print(FPSTR(programTemporarCancelString));
+		display.print(FPSTR(temporaryScheduleCancelString));
 		display.write(' ');
-		display.println(FPSTR(programTemporarDeleteString));
+		display.println(FPSTR(temporaryScheduleDeleteString));
 	}
 	display.setTextColor(BLACK);
 	display.display();
