@@ -963,8 +963,81 @@ void simpleDisplay(const String &str)
 	display.display();
 }
 
-// helper function that displays the current selected date and time in manual time mode
 void manualTimeHelper(int h, int m, int d, int mth, int y, int sel)
+{
+	display.clearDisplay();
+	display.setTextSize(1);
+	display.setTextColor(BLACK);
+	display.setCursor(0, 0);
+	display.println(FPSTR(manualTimeString));
+
+	display.setCursor(27, 15);
+	if (sel == 0)
+	{
+		display.setTextColor(WHITE, BLACK);
+		display.printf("%.2d", h);
+		display.setTextColor(BLACK);
+	}
+	else
+	{
+		display.setTextColor(BLACK);
+		display.printf("%.2d", h);
+	}
+	display.print(':');
+	if (sel == 1)
+	{
+		display.setTextColor(WHITE, BLACK);
+		display.printf("%.2d", m);
+		display.setTextColor(BLACK);
+	}
+	else
+	{
+		display.setTextColor(BLACK);
+		display.printf("%.2d", m);
+	}
+
+	display.setCursor(14, 30);
+	if (sel == 2)
+	{
+		display.setTextColor(WHITE, BLACK);
+		display.printf("%.2d", d);
+		display.setTextColor(BLACK);
+	}
+	else
+	{
+		display.setTextColor(BLACK);
+		display.printf("%.2d", d);
+	}
+	display.print('.');
+	if (sel == 3)
+	{
+		display.setTextColor(WHITE, BLACK);
+		display.printf("%.2d", mth);
+		display.setTextColor(BLACK);
+	}
+	else
+	{
+		display.setTextColor(BLACK);
+		display.printf("%.2d", mth);
+	}
+	display.print('.');
+	if (sel == 4)
+	{
+		display.setTextColor(WHITE, BLACK);
+		display.println(y);
+		display.setTextColor(BLACK);
+	}
+	else
+	{
+		display.setTextColor(BLACK);
+		display.println(y);
+	}
+
+	display.display();
+}
+
+// helper function that displays the current selected date and time in manual time mode
+void old_manualTimeHelper(int h, int m, int d, int mth, int y, int sel)
 {
 	String sh = "", sm = "", sd = "", smth = "", sy;
 	if (h < 10)
@@ -1056,7 +1129,7 @@ void manualTimeHelper(int h, int m, int d, int mth, int y, int sel)
 void getCredentials(String &ssid, String &password)
 {
 	ssid = "***REMOVED***";
-	password = "***REMOVED***";
+	password = "a***REMOVED***";
 }
 
 // connects to wifi
