@@ -970,7 +970,7 @@ void manualTimeHelper(int h, int m, int d, int mth, int y, int sel)
 	display.clearDisplay();
 	display.setTextSize(1);
 	display.setTextColor(BLACK);
-	display.setCursor(0, 0);
+	display.setCursor(10, 0);
 	display.println(FPSTR(manualTimeString));
 
 	display.setCursor(27, 15);
