@@ -85,6 +85,7 @@ const char displayErrorNTPString[] PROGMEM = "!N"; // displays this if NTP doesn
 const char displayErrorFirebaseString[] PROGMEM = "!F"; // displays this if Firebase doesn't work
 const char displayErrorTemperatureString[] PROGMEM = "!T"; // displays this if the temperature sensor doesn't work
 const char displayErrorHumidityString[] PROGMEM = "!H"; // displays this if the humidity sensor doesn't work
+const int heaterPin = 32;
 
 //contains the pixel values that make up the flame icon displayed when the heater is on
 const byte flame[] PROGMEM = {
@@ -239,8 +240,8 @@ void virtualShowWifiSetupMenu();
 void showStartupMenu();
 void displayStartupMenu(int highlightedOption);
 void virtualDisplayStartupMenu(int highlightedOption);
-void sendSignalToHeater(bool _on);
-void virtualSendSignalToHeater(bool _on);
+void sendSignalToHeater(bool signal);
+void virtualSendSignalToHeater(bool signal);
 void UpdateDisplay();
 void temporaryScheduleSetup();
 void temporaryScheduleHelper(int sensor, float temp, int duration, int option, int sel);
@@ -256,11 +257,12 @@ bool compareTemperatureWithSetTemperature(float temp, float setTemp);
 
 void setup()
 {
+    pinMode(heaterPin, OUTPUT);
+	sendSignalToHeater(false); // we stop the heater at startup
 	Serial.begin(115200); // in serial monitor, use the CR & NL option for line ending (probably not mandatory)
 	display.clearDisplay(); // gets rid of the adafruit logo at the beginning
 	display.begin();
 	display.setContrast(displayContrast);
-	sendSignalToHeater(false); // we stop the heater at startup
 
 	// normal operation setup
 	dht.begin();
@@ -1119,19 +1121,16 @@ Button virtualButtonPressed()
 	return Button::None;
 }
 
-void sendSignalToHeater(bool _on)
+void sendSignalToHeater(bool signal)
 {
 	// to be implemented
-	heaterState = _on;
-	virtualSendSignalToHeater(_on);
+	heaterState = signal;
+    digitalWrite(heaterPin, signal);
+	virtualSendSignalToHeater(signal);
 }
 
 // prints the desired heater state in the Serial
-void virtualSendSignalToHeater(bool _on)
+void virtualSendSignalToHeater(bool signal)
 {
-	Serial.print("Heater: ");
-	if (_on)
-		Serial.println("on");
-	else
-		Serial.println("off");
+    Serial.printf("Heater: %s\n", signal ? "on" : "off");
 }
