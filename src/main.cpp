@@ -20,22 +20,22 @@
 #define DEGREESYMB (char)247
 
 
-const char ErrorOpenSPIFFS[] PROGMEM = "Critical Error\nOpening SPIFFS";
-const char ErrorOpenConfigWrite[] PROGMEM = "Critical Error\nOpening config\nfor writing";
-const char ErrorOpenConfigRead[] PROGMEM = "Error\nOpening config\ntry Setup";
-const char ErrorWifiConnect[] PROGMEM = "Error\nConnecting to\nWifi";
-const char ErrorNTP[] PROGMEM = "Error\nGetting NTP\nEnter it\nmanually";
-const char ServerNotAllArgsPresent[] PROGMEM = "Not all the arguments are present";
-const char ServerReceivedArgs[] PROGMEM = "OK";
-const char GotCredentials[] PROGMEM = "Got credetials";
-const char UpdateStarted[] PROGMEM = "Update Started";
-const char UpdateEnded[] PROGMEM = "Update Ended";
-const char UpdateError[] PROGMEM = "Update Failed";
-const char NormalModeMessage[] PROGMEM = "Normal Op.";
-const char SetupWifiMessage[] PROGMEM = "Setup Wifi";
-const char OTAUpdateMessage[] PROGMEM = "OTA Update";
-const char StartupMenuMessage[] PROGMEM = "Startup Menu";
-const char NTPServer[] PROGMEM = "pool.ntp.org";
+const char errorOpenSPIFFS[] PROGMEM = "Critical Error\nOpening SPIFFS";
+const char errorOpenConfigWrite[] PROGMEM = "Critical Error\nOpening config\nfor writing";
+const char errorOpenConfigRead[] PROGMEM = "Error\nOpening config\ntry Setup";
+const char errorWifiConnect[] PROGMEM = "Error\nConnecting to\nWifi";
+const char errorNTP[] PROGMEM = "Error\nGetting NTP\nEnter it\nmanually";
+const char serverNotAllArgsPresent[] PROGMEM = "Not all the arguments are present";
+const char serverReceivedArgs[] PROGMEM = "OK";
+const char gotCredentials[] PROGMEM = "Got credetials";
+const char updateStarted[] PROGMEM = "Update Started";
+const char updateEnded[] PROGMEM = "Update Ended";
+const char updateError[] PROGMEM = "Update Failed";
+const char normalModeMessage[] PROGMEM = "Normal Op.";
+const char setupWifiMessage[] PROGMEM = "Setup Wifi";
+const char otaUpdateMessage[] PROGMEM = "OTA Update";
+const char startupMenuMessage[] PROGMEM = "Startup Menu";
+const char ntpServer[] PROGMEM = "pool.ntp.org";
 const int8_t timezoneOffset = 2; // in Romania, the timezone is UTC+2
 const int8_t timezoneOffsetMinutes = 0; // for timezones that are not whole numbers, for example UTC+2.5 will be written as timezoneOffset = 2, timezoneOffsetMinutes = 30
 const bool timezoneDST = true; // true if the timezone uses Daylight Saving (Summer time, Winter time)
@@ -47,12 +47,12 @@ const uint8_t pinCS = 5; // CS pin for display
 const uint8_t pinRST = 22; // RST pin for display
 const uint8_t displayContrast = 40;
 const unsigned long waitingTimeConnectWifi = 10000; // the time we wait for it to connect to the wifi network, in normal operation mode and OTA mode, in milliseconds
-const int NTPInterval = 900; // the time interval after which we update the time, in seconds
+const int ntpInterval = 900; // the time interval after which we update the time, in seconds
 const int timesTryNTP = 3; // how many times we try to download the time from the internet, before we either enter manual mode, if it happens at startup, or we show an NTP error
-const char GotTime[] PROGMEM = "Got Time:";
+const char gotTime[] PROGMEM = "Got Time:";
 const char manualTimeString[] PROGMEM = "Manual Time";
 const char manualTimeFormatString[] PROGMEM = "%.2d"; // format string used in the manual time menu for displaying the hour, minute, date and month; just puts a 0 in front of them if they are less than 2 digits
-const char db_path[] PROGMEM = "arduino-test-8c103.firebaseio.com"; // the URL of the Firebase
+const char firebasePath[] PROGMEM = "arduino-test-8c103.firebaseio.com"; // the URL of the Firebase
 const char auth[] PROGMEM = "wwy3KljIFEEM5Cv4nEbVGSkeKXG1rcooeKrUPmjO"; // Firebase secret key
 const char schedulePath[] PROGMEM = "/Program"; // the path to the schedules
 const char firebaseFingerprint[] = "B6 F5 80 C8 B1 DA 61 C1 07 9D 80 42 D8 A9 1F AF 9F C8 96 7D";
@@ -85,7 +85,7 @@ const char displayErrorNTPString[] PROGMEM = "!N"; // displays this if NTP doesn
 const char displayErrorFirebaseString[] PROGMEM = "!F"; // displays this if Firebase doesn't work
 const char displayErrorTemperatureString[] PROGMEM = "!T"; // displays this if the temperature sensor doesn't work
 const char displayErrorHumidityString[] PROGMEM = "!H"; // displays this if the humidity sensor doesn't work
-const int heaterPin = 32;
+const int heaterPin = 32; // pin that controls the relay (through a mosfet) which controls the heater
 
 //contains the pixel values that make up the flame icon displayed when the heater is on
 const byte flame[] PROGMEM = {
@@ -173,7 +173,7 @@ public:
         // the esp32 version of httpclient doesn't manage redirects automatically
 		//setFollowRedirects(true);
 		// we open a secure connection
-		begin(String(F("https://")) + FPSTR(db_path) + FPSTR(schedulePath) + F(".json?auth=") + FPSTR(auth), firebaseFingerprint);
+		begin(String(F("https://")) + FPSTR(firebasePath) + FPSTR(schedulePath) + F(".json?auth=") + FPSTR(auth), firebaseFingerprint);
 		addHeader("Accept", "text/event-stream");
 
         //manage redirects manually
@@ -232,9 +232,9 @@ void wifiSetupHandlePost();
 void getCredentials(String &ssid, String &password);
 void storeCredentials(const String &_ssid, const String &_password);
 bool connectSTAMode();
-void OTAUpdateSetup();
+void otaUpdateSetup();
 void setupWifiLoop();
-void OTAUpdateLoop();
+void otaUpdateLoop();
 void showWifiSetupMenu();
 void virtualShowWifiSetupMenu();
 void showStartupMenu();
@@ -242,7 +242,7 @@ void displayStartupMenu(int highlightedOption);
 void virtualDisplayStartupMenu(int highlightedOption);
 void sendSignalToHeater(bool signal);
 void virtualSendSignalToHeater(bool signal);
-void UpdateDisplay();
+void updateDisplay();
 void temporaryScheduleSetup();
 void temporaryScheduleHelper(int sensor, float temp, int duration, int option, int sel);
 void displayTemp(float temp, int cursorX, int cursorY);
@@ -270,12 +270,12 @@ void setup()
 	if (!connectSTAMode())
 	{
 		// error connecting to wifi
-		Serial.println(FPSTR(ErrorWifiConnect));
-		simpleDisplay(String(FPSTR(ErrorWifiConnect)));
+		Serial.println(FPSTR(errorWifiConnect));
+		simpleDisplay(String(FPSTR(errorWifiConnect)));
 		wifiWorking = false;
 	}
-	NTP.begin(String(FPSTR(NTPServer)), timezoneOffset, timezoneDST, timezoneOffsetMinutes);
-	NTP.setInterval(NTPInterval, NTPInterval);
+	NTP.begin(String(FPSTR(ntpServer)), timezoneOffset, timezoneDST, timezoneOffsetMinutes);
+	NTP.setInterval(ntpInterval, ntpInterval);
 	if (wifiWorking)
 	{
 		// if wifi works, we try to get NTP time
@@ -295,8 +295,8 @@ void setup()
 		if (NTP.getLastNTPSync() == 0)
 		{
 			NTPWorking = false;
-			Serial.println(FPSTR(ErrorNTP));
-			simpleDisplay(String(FPSTR(ErrorNTP)));
+			Serial.println(FPSTR(errorNTP));
+			simpleDisplay(String(FPSTR(errorNTP)));
 			delay(3000);
 			manualTimeSetup();
 		}
@@ -314,7 +314,7 @@ void setup()
 
 	display.clearDisplay();
 	display.setCursor(0, 0);
-	display.println(FPSTR(GotTime));
+	display.println(FPSTR(gotTime));
 	display.println(NTP.getTimeStr());
 	display.println(NTP.getDateStr());
 	display.display();
@@ -346,7 +346,7 @@ void loop()
 			{
 				Serial.printf("attempt nr %d\n", i);
 				HTTPClient getHttp;
-				getHttp.begin(String(F("https://")) + FPSTR(db_path) + FPSTR(schedulePath) + F(".json?auth=") + FPSTR(auth), firebaseFingerprint);
+				getHttp.begin(String(F("https://")) + FPSTR(firebasePath) + FPSTR(schedulePath) + F(".json?auth=") + FPSTR(auth), firebaseFingerprint);
 				result = getHttp.GET();
 				if (result != HTTP_CODE_OK)
 				{
@@ -376,8 +376,8 @@ void loop()
 	}
 	// we check if wifi works
 	wifiWorking = WiFi.isConnected();
-	// if we have never succesfully downloaded the time, or if timesTryNTP * NTPInterval time has passed since the last succesfull time sync, we set NTPWorking to false
-	NTPWorking = NTP.getLastNTPSync() != 0 && now() - NTP.getLastNTPSync() < timesTryNTP * NTPInterval;
+	// if we have never succesfully downloaded the time, or if timesTryNTP * ntpInterval time has passed since the last succesfull time sync, we set NTPWorking to false
+	NTPWorking = NTP.getLastNTPSync() != 0 && now() - NTP.getLastNTPSync() < timesTryNTP * ntpInterval;
 	// once every intervalRetryError milliseconds, we try to solve the errors, i.e. reconnect to wifi, firebase etc
 	if (millis() - lastRetryErrors > intervalRetryErrors)
 	{
@@ -426,14 +426,14 @@ void loop()
 		}
 	}
 	// check if enter was pressed
-	// in the future, this will run alone with UpdateDisplay on a separate core, on the esp32
+	// in the future, this will run alone with updateDisplay on a separate core, on the esp32
 	Button pressed = buttonPressed();
 	if (pressed == Button::Enter)
 	{
 		Serial.println("enter was pressed");
 		temporaryScheduleSetup();
 	}
-	UpdateDisplay();
+	updateDisplay();
 }
 
 // function which looks at each schedule in the scheduleString, decides which has the top priority, and returns the signal to send to the heater
@@ -784,7 +784,7 @@ void temporaryScheduleHelper(int sensor, float temp, int duration, int option, i
 	display.display();
 }
 
-void UpdateDisplay()
+void updateDisplay()
 {
   display.clearDisplay();
   time_t t = now();
