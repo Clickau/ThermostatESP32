@@ -216,6 +216,9 @@ DHT_Unified::Humidity hSens = dht.humidity();
 Adafruit_Sensor *tempSensor = &tSens;
 Adafruit_Sensor *humSensor = &hSens;
 
+TaskHandle_t setupCore0Handle;
+TaskHandle_t loopCore0Handle;
+
 
 Button buttonPressed();
 Button virtualButtonPressed();
@@ -254,8 +257,10 @@ void displayErrors(int cursorX, int cursorY);
 bool evaluateSchedule();
 bool scheduleIsActive(const JsonObject& schedule);
 bool compareTemperatureWithSetTemperature(float temp, float setTemp);
+void setupCore0(void *param);
+void loopCore0(void *param);
 
-void setup()
+/*void setup()
 {
     pinMode(heaterPin, OUTPUT);
 	sendSignalToHeater(false); // we stop the heater at startup
@@ -328,9 +333,9 @@ void setup()
 		Serial.println("bypassed firebase init because wifi doesnt work");
 		firebaseWorking = false;
 	}
-}
+}*/
 
-void loop()
+/*void loop()
 {
 	// normal operation loop
 	if (firebaseWorking)
@@ -434,7 +439,242 @@ void loop()
 		temporaryScheduleSetup();
 	}
 	updateDisplay();
+}*/
+
+// core 1
+// just for UI (display and buttons)
+void setup()
+{
+    // stopping the heater right at startup
+    pinMode(heaterPin, OUTPUT);
+    sendSignalToHeater(false);
+    Serial.begin(115200);
+    display.begin();
+    display.clearDisplay();
+    display.setContrast(displayContrast);
+
+
+    bool doneInit = false;
+
+    xTaskCreatePinnedToCore(
+        setupCore0,
+        "setupCore0",
+        10000, // stack size ??
+        &doneInit,
+        1, //priority
+        &setupCore0Handle,
+        0 // core
+    );
+
+    // we wait until setupCore0 sets doneInit to true, meaning it has initialized wifi and ntp, and we can check for errors and display them
+    while (!doneInit)
+        delay(10);
+
+    // if wifi or ntp doesn't work, we enter manual time setup
+    if (!wifiWorking)
+    {
+        Serial.println(FPSTR(errorWifiConnect));
+		simpleDisplay(String(FPSTR(errorWifiConnect)));
+        delay(3000);
+        manualTimeSetup();
+    }
+    else if (!NTPWorking)
+    {
+        Serial.println(FPSTR(errorNTP));
+        simpleDisplay(String(FPSTR(errorNTP)));
+        delay(3000);
+        manualTimeSetup();
+    }
+
+    // we are sure we have the current time (either via ntp or manual time)
+    Serial.printf("core %u: got time:\n", xPortGetCoreID());
+	Serial.println(NTP.getTimeDateString());
+
+	display.clearDisplay();
+	display.setCursor(0, 0);
+	display.println(FPSTR(gotTime));
+	display.println(NTP.getTimeStr());
+	display.println(NTP.getDateStr());
+	display.display();
+
+    xTaskCreatePinnedToCore(
+        loopCore0,
+        "loopCore0",
+        10000, // stack size ??
+        NULL,
+        1, // priority
+        &loopCore0Handle,
+        0 // core
+    );
+
 }
+
+void loop()
+{
+    Button pressed = buttonPressed();
+	if (pressed == Button::Enter)
+	{
+		Serial.println("enter was pressed");
+        temporaryScheduleSetup();
+	}
+	updateDisplay();
+}
+
+void setupCore0(void *param)
+{
+    Serial.printf("setup started on core %u", xPortGetCoreID());
+    bool *p = (bool *) param;
+    dht.begin();
+    if (!connectSTAMode())
+	{
+		// error connecting to wifi
+		wifiWorking = false;
+	}
+    NTP.begin(String(FPSTR(ntpServer)), timezoneOffset, timezoneDST, timezoneOffsetMinutes);
+	NTP.setInterval(ntpInterval, ntpInterval);
+    if (wifiWorking)
+	{
+		// if wifi works, we try to get NTP time
+		Serial.printf("core %u: trying to get time\n", xPortGetCoreID());
+		int i = 0;
+		while (NTP.getLastNTPSync() == 0 && i < timesTryNTP) // we try timesTryNTP times, before giving up
+		{
+			Serial.printf("core %u: attempt nr %d\n", xPortGetCoreID(), i);
+			time_t t = NTP.getTime();
+			if (t != 0)
+				setTime(t);
+			i++;
+			delay(500);
+			// problem here: if i disconnect the internet cable from the router and reconnect it during the while, sometimes the esp is reset by the hardware wdt (??)
+		}
+		if (NTP.getLastNTPSync() == 0)
+		{
+			NTPWorking = false;
+		}
+
+        Serial.printf("core %u: initialize firebase\n", xPortGetCoreID());
+		firebaseWorking = firebaseClient.initializeStream();
+	}
+    else
+	{
+		Serial.printf("core %u: bypassed ntp because wifi doesnt work\n", xPortGetCoreID());
+		NTPWorking = false;
+        Serial.printf("core %u: bypassed firebase init because wifi doesnt work\n", xPortGetCoreID());
+		firebaseWorking = false;
+	}
+
+    // the mandatory setup is done, core 1 can display the eventual errors and enter manual time setup if needed
+    *p = true;
+
+    // delete this task
+    vTaskDelete(NULL);
+}
+
+void loopCore0(void *param)
+{
+    while (1)
+    {
+        if (firebaseWorking)
+        {
+            if (firebaseClient.consumeStreamIfAvailable())
+            {
+                // something in the database changed, we download the whole database
+                // we try it for timesTryFirebase times, before we give up
+                Serial.println("new change!");
+                int result;
+                int i = 0;
+                do
+                {
+                    Serial.printf("attempt nr %d\n", i);
+                    HTTPClient getHttp;
+                    getHttp.begin(String(F("https://")) + FPSTR(firebasePath) + FPSTR(schedulePath) + F(".json?auth=") + FPSTR(auth), firebaseFingerprint);
+                    result = getHttp.GET();
+                    if (result != HTTP_CODE_OK)
+                    {
+                        Serial.println("error getHttp");
+                        Serial.println(result);
+                        getHttp.end();
+                    }
+                    else
+                    {
+                        // if everything worked corectly, we store the received string, which contains the json representation of the schedules
+                        scheduleString = getHttp.getString();
+                        getHttp.end();
+                        break;
+                    }
+                    i++;
+                } while (i < timesTryFirebase);
+                if (result != HTTP_CODE_OK)
+                {
+                    Serial.println("failed to get program");
+                    firebaseWorking = false;
+                }
+                else
+                {
+                    Serial.println("got new program");
+                }
+            }
+        }
+        // we delay multiple times per loop iteration, so that, in case all the code gets executed, it won't block essential tasks for the esp and cause task wdt to reset
+        delay(50);
+        // we check if wifi works
+        wifiWorking = WiFi.isConnected();
+        // if we have never succesfully downloaded the time, or if timesTryNTP * ntpInterval time has passed since the last succesfull time sync, we set NTPWorking to false
+        NTPWorking = NTP.getLastNTPSync() != 0 && now() - NTP.getLastNTPSync() < timesTryNTP * ntpInterval;
+        // once every intervalRetryError milliseconds, we try to solve the errors, i.e. reconnect to wifi, firebase etc
+        if (millis() - lastRetryErrors > intervalRetryErrors)
+        {
+            Serial.println("trying to fix errors, if any");
+            lastRetryErrors = millis();
+            if (!wifiWorking)
+            {
+                WiFi.disconnect(true);
+                wifiWorking = connectSTAMode();
+            }
+            if (!firebaseWorking && wifiWorking)
+            {
+                firebaseWorking = firebaseClient.initializeStream();
+            }
+            Serial.printf("wifiWorking:%d ", wifiWorking);
+            Serial.printf("NTPWorking:%d ", NTPWorking);
+            Serial.printf("humWorking:%d ", humWorking);
+            Serial.printf("tempWorking: %d\n", tempWorking);
+        }
+        // we delay multiple times per loop iteration, so that, in case all the code gets executed, it won't block essential tasks for the esp and cause task wdt to reset
+        delay(50);
+        // we update temperature, humidity every intervalUpdateTemperature milliseconds, and we reevaluate the schedule
+        if (millis() - lastTemperatureUpdate >= intervalUpdateTemperature)
+        {
+            lastTemperatureUpdate = millis();
+            updateTemp();
+            updateHum();
+            // if a temporary schedule is active, we ignore the normal schedule and follow it
+            // otherwise, we evaluate the normal schedule
+            if (temporaryScheduleActive)
+            {
+                if (now() < temporaryScheduleEnd || temporaryScheduleEnd == -1)
+                {
+                    bool signal = compareTemperatureWithSetTemperature(temperature, temporaryScheduleTemp);
+                    sendSignalToHeater(signal);
+                }
+                else
+                {
+                    // if the temporary schedule has expired, we deactivate it
+                    temporaryScheduleActive = false;
+                }
+                
+            }
+            else
+            {
+                bool signal = evaluateSchedule();
+                sendSignalToHeater(signal);
+            }
+        }
+        // we delay multiple times per loop iteration, so that, in case all the code gets executed, it won't block essential tasks for the esp and cause task wdt to reset
+        delay(50);
+    }
+}
+
 
 // function which looks at each schedule in the scheduleString, decides which has the top priority, and returns the signal to send to the heater
 bool evaluateSchedule()
