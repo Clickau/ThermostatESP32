@@ -86,6 +86,10 @@ const char displayErrorFirebaseString[] PROGMEM = "!F"; // displays this if Fire
 const char displayErrorTemperatureString[] PROGMEM = "!T"; // displays this if the temperature sensor doesn't work
 const char displayErrorHumidityString[] PROGMEM = "!H"; // displays this if the humidity sensor doesn't work
 const int heaterPin = 32; // pin that controls the relay (through a mosfet) which controls the heater
+// the buttons are pulled down through software, need to be active high
+const int pinUp = 25; // up button
+const int pinDown = 26; // down button
+const int pinEnter = 27; // enter button
 
 //contains the pixel values that make up the flame icon displayed when the heater is on
 const byte flame[] PROGMEM = {
@@ -125,6 +129,8 @@ unsigned long lastTemperatureUpdate = 0;
 bool temporaryScheduleActive = false;
 float temporaryScheduleTemp = NAN;
 time_t temporaryScheduleEnd = 0;
+bool buttonBeingHeld = false;
+
 
 // custom HTTPClient that can handle Firebase Streaming
 class StreamingHttpClient : private HTTPClient
@@ -447,6 +453,9 @@ void setup()
 {
     // stopping the heater right at startup
     pinMode(heaterPin, OUTPUT);
+    pinMode(pinUp, INPUT_PULLDOWN);
+    pinMode(pinDown, INPUT_PULLDOWN);
+    pinMode(pinEnter, INPUT_PULLDOWN);
     sendSignalToHeater(false);
     Serial.begin(115200);
     display.begin();
@@ -1328,11 +1337,54 @@ bool connectSTAMode()
 }
 
 // if no button is pressed, returns Button::None
-// if a button is pressed, it returns Button::Enter, Button::Up or Button::Down respectively
+// if a button is pressed, it returns Button::Enter, Button::Up or Button::Down respectively only once, and returns Button::None while the button is being held down
 Button buttonPressed()
 {
 	// temporary for testing
-	return virtualButtonPressed();
+	//return virtualButtonPressed();
+    if (digitalRead(pinEnter))
+    {
+        if (!buttonBeingHeld)
+        {
+            Serial.println("Enter was pressed");
+            buttonBeingHeld = true;
+            // delay for debouncing
+            delay(200);
+            return Button::Enter;
+        }
+        else
+            return Button::None;
+    }
+    if (digitalRead(pinUp))
+    {
+        if (!buttonBeingHeld)
+        {
+            Serial.println("Up was pressed");
+            buttonBeingHeld = true;
+            // delay for debouncing
+            delay(200);
+            return Button::Up;
+        }
+        else
+            return Button::None;
+        
+    }
+    if (digitalRead(pinDown))
+    {
+        if (!buttonBeingHeld)
+        {
+            Serial.println("Down was pressed");
+            buttonBeingHeld = true;
+            // delay for debouncing
+            delay(200);
+            return Button::Down;
+        }
+        else
+            return Button::None;
+        
+    }
+    buttonBeingHeld = false;
+    return Button::None;
 }
 
 // gets the button from the Serial
