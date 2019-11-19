@@ -16,6 +16,7 @@
 #include <TimeLib.h>
 #include <NtpClientLib.h>
 #include "DSEG7Classic-Bold6pt.h"
+#include "firebase_certificate.h"
 
 #define DEGREESYMB (char)247
 
@@ -55,7 +56,6 @@ const char manualTimeFormatString[] PROGMEM = "%.2d"; // format string used in t
 const char firebasePath[] PROGMEM = "arduino-test-8c103.firebaseio.com"; // the URL of the Firebase
 const char auth[] PROGMEM = "wwy3KljIFEEM5Cv4nEbVGSkeKXG1rcooeKrUPmjO"; // Firebase secret key
 const char schedulePath[] PROGMEM = "/Program"; // the path to the schedules
-const char firebaseFingerprint[] = "B6 F5 80 C8 B1 DA 61 C1 07 9D 80 42 D8 A9 1F AF 9F C8 96 7D";
 const float tempThreshold = 0.5f; // the temperature difference needed between the set temperature and the current room temperature to trigger the heater
 const int timesTryFirebase = 2; // how many times we try to download the schedules from FB, before showing error
 const unsigned long intervalRetryErrors = 300000; // the time interval after which we try to solve the error, for example reconnecting to wifi, reconnecting to Firebase
@@ -179,7 +179,7 @@ public:
         // the esp32 version of httpclient doesn't manage redirects automatically
 		//setFollowRedirects(true);
 		// we open a secure connection
-		begin(String(F("https://")) + FPSTR(firebasePath) + FPSTR(schedulePath) + F(".json?auth=") + FPSTR(auth), firebaseFingerprint);
+        begin(_client_secure, String(F("https://")) + FPSTR(firebasePath) + FPSTR(schedulePath) + F(".json?auth=") + FPSTR(auth));
 		addHeader("Accept", "text/event-stream");
 
         //manage redirects manually
@@ -209,8 +209,13 @@ public:
 		setReuse(false);
 		end();
 	}
+    StreamingHttpClient()
+    {
+        _client_secure.setCACert(firebaseRootCA);
+    }
 private:
 	bool _initialized = false;
+    WiFiClientSecure _client_secure;
 };
 
 Adafruit_PCD8544 display = Adafruit_PCD8544(pinDC, pinCS, pinRST);
@@ -596,7 +601,9 @@ void loopCore0(void *param)
                 {
                     Serial.printf("attempt nr %d\n", i);
                     HTTPClient getHttp;
-                    getHttp.begin(String(F("https://")) + FPSTR(firebasePath) + FPSTR(schedulePath) + F(".json?auth=") + FPSTR(auth), firebaseFingerprint);
+                    WiFiClientSecure client;
+                    client.setCACert(firebaseRootCA);
+                    getHttp.begin(client, String(F("https://")) + FPSTR(firebasePath) + FPSTR(schedulePath) + F(".json?auth=") + FPSTR(auth));
                     result = getHttp.GET();
                     if (result != HTTP_CODE_OK)
                     {
