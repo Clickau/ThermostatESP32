@@ -15,10 +15,10 @@ const char gotCredentials[] PROGMEM = "Got credetials";
 const char updateStarted[] PROGMEM = "Update Started";
 const char updateEnded[] PROGMEM = "Update Ended";
 const char updateError[] PROGMEM = "Update Failed";
-const char normalModeMessage[] PROGMEM = "Normal Op.";
-const char setupWifiMessage[] PROGMEM = "Setup Wifi";
-const char otaUpdateMessage[] PROGMEM = "OTA Update";
-const char startupMenuMessage[] PROGMEM = "Startup Menu";
+const char normalModeMenuEntry[] PROGMEM = "Normal Op.";
+const char setupWifiMenuEntry[] PROGMEM = "Setup Wifi";
+const char otaUpdateMenuEntry[] PROGMEM = "OTA Update";
+const char startupMenuTitle[] PROGMEM = "Startup Menu";
 const char ntpServer[] PROGMEM = "pool.ntp.org";
 const int8_t timezoneOffset = 2; // in Romania, the timezone is UTC+2
 const int8_t timezoneOffsetMinutes = 0; // for timezones that are not whole numbers, for example UTC+2.5 will be written as timezoneOffset = 2, timezoneOffsetMinutes = 30
