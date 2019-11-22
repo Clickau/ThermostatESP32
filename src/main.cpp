@@ -22,6 +22,7 @@ enum class Button
 	Down = 2
 };
 
+int operatingMode = -1; // 0 = Normal Operation, 1 = Setup Wifi, 2 = OTAUpdate
 bool heaterState = false;
 String scheduleString;
 bool wifiWorking = true;
@@ -140,27 +141,15 @@ TaskHandle_t loopCore0Handle;
 
 Button buttonPressed();
 Button virtualButtonPressed();
-void normalOperationSetup();
-void normalOperationLoop();
 void updateTemp();
 void updateHum();
 void manualTimeSetup();
 void simpleDisplay(const String &str);
 void manualTimeHelper(int h, int m, int d, int mth, int y, int sel);
-void setupWifiSetup();
-void wifiSetupHandleRoot();
-void wifiSetupHandlePost();
 void getCredentials(String &ssid, String &password);
-void storeCredentials(const String &_ssid, const String &_password);
 bool connectSTAMode();
-void otaUpdateSetup();
-void setupWifiLoop();
-void otaUpdateLoop();
-void showWifiSetupMenu();
-void virtualShowWifiSetupMenu();
 void showStartupMenu();
-void displayStartupMenu(int highlightedOption);
-void virtualDisplayStartupMenu(int highlightedOption);
+void startupMenuHelper(int highlightedOption);
 void sendSignalToHeater(bool signal);
 void virtualSendSignalToHeater(bool signal);
 void updateDisplay();
@@ -177,9 +166,13 @@ bool scheduleIsActive(const JsonObject& schedule);
 bool compareTemperatureWithSetTemperature(float temp, float setTemp);
 void setupCore0(void *param);
 void loopCore0(void *param);
+void setupNormalOperation();
+void loopNormalOperation();
+void setupSetupWifi();
+void loopSetupWifi();
+void setupOTAUpdate();
+void loopOTAUpdate();
 
-// core 1
-// just for UI (display and buttons)
 void setup()
 {
     // stopping the heater right at startup
@@ -189,11 +182,132 @@ void setup()
     pinMode(pinEnter, INPUT_PULLDOWN);
     sendSignalToHeater(false);
     Serial.begin(115200);
-    display.begin();
     display.clearDisplay();
+    display.begin();
     display.setContrast(displayContrast);
 
+    // menu where the user selects which operation mode should be used
+    showStartupMenu();
+}
 
+void showStartupMenu()
+{
+    // operation mode:  0 - Normal Operation
+    //                  1 - Setup Wifi
+    //                  2 - OTA Update
+    // first the selected option is Normal Operation
+	startupMenuHelper(0);
+	int currentHighlightedValue = 0;
+	unsigned long previousTime = millis();
+	bool autoselect = true;
+	Button lastButtonPressed = buttonPressed();
+	while (lastButtonPressed != Button::Enter)
+	{
+		if (lastButtonPressed == Button::Up)
+		{
+			Serial.println("Sus a fost apasat in metoda showStartupMenu");
+			autoselect = false;
+			if (currentHighlightedValue != 0)
+				currentHighlightedValue--;
+			else
+				currentHighlightedValue = 2;
+			startupMenuHelper(currentHighlightedValue);
+		}
+		else if (lastButtonPressed == Button::Down)
+		{
+			Serial.println("Jos a fost apasat in metoda showStartupMenu");
+			autoselect = false;
+			if (currentHighlightedValue != 2)
+				currentHighlightedValue++;
+			else
+				currentHighlightedValue = 0;
+			startupMenuHelper(currentHighlightedValue);
+		}
+		if (autoselect && (millis() - previousTime >= waitingTimeInStartupMenu))
+		{
+			break;
+		}
+		lastButtonPressed = buttonPressed();
+	}
+    // we clear the display before entering the chosen setup
+    display.clearDisplay();
+    display.display();
+	if (autoselect)
+	{
+		operatingMode = 0;
+		setupNormalOperation();
+		return;
+	}
+	Serial.println("Enter a fost apasat in metoda showStartupMenu");
+	operatingMode = currentHighlightedValue;
+	switch (currentHighlightedValue)
+	{
+	case 0:
+		setupNormalOperation();
+		break;
+	case 1:
+		setupSetupWifi();
+		break;
+	case 2:
+		setupOTAUpdate();
+		break;
+	}
+}
+
+void startupMenuHelper(int highlightedOption)
+{
+	display.clearDisplay();
+	display.setTextSize(1);
+	display.setCursor(0, 0);
+
+	display.println(FPSTR(startupMenuTitle));
+
+	if (highlightedOption == 0)
+        display.setTextColor(WHITE, BLACK);
+    else
+        display.setTextColor(BLACK);
+
+	display.println(FPSTR(normalModeMenuEntry));
+
+	if (highlightedOption == 1)
+		display.setTextColor(WHITE, BLACK);
+    else
+        display.setTextColor(BLACK);
+
+	display.println(FPSTR(setupWifiMenuEntry));
+    
+	if (highlightedOption == 2)
+		display.setTextColor(WHITE, BLACK);
+    else
+        display.setTextColor(BLACK);
+
+	display.println(FPSTR(otaUpdateMenuEntry));
+
+    display.setTextColor(BLACK);
+
+	display.display();
+}
+
+void loop()
+{
+    switch(operatingMode)
+    {
+        case 0:
+            loopNormalOperation();
+            break;
+        case 1:
+            loopSetupWifi();
+            break;
+        case 2:
+            loopOTAUpdate();
+            break;
+    }
+}
+
+// core 1
+// just for UI (display and buttons)
+void setupNormalOperation()
+{
     bool doneInit = false;
 
     xTaskCreatePinnedToCore(
@@ -249,7 +363,7 @@ void setup()
 
 }
 
-void loop()
+void loopNormalOperation()
 {
     Button pressed = buttonPressed();
 	if (pressed == Button::Enter)
@@ -415,6 +529,26 @@ void loopCore0(void *param)
         // we delay multiple times per loop iteration, so that, in case all the code gets executed, it won't block essential tasks for the esp and cause task wdt to reset
         delay(50);
     }
+}
+
+void setupSetupWifi()
+{
+    Serial.println("setup wifi setup!");
+}
+
+void loopSetupWifi()
+{
+
+}
+
+void setupOTAUpdate()
+{
+    Serial.println("ota update setup!");
+}
+
+void loopOTAUpdate()
+{
+
 }
 
 
