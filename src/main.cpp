@@ -686,8 +686,8 @@ void storeCredentials(const String &ssid, const String &password)
 	{
 		Serial.println(FPSTR(errorOpenSPIFFS));
 		simpleDisplay(String(FPSTR(errorOpenSPIFFS)));
-        delay(5000);
-        ESP.restart();
+        // we do nothing, waiting for user intervention
+        while (true) { delay(1000); }
 	}
 	File wifiConfigFile = SPIFFS.open("/config.txt", "w+");
 	if (!wifiConfigFile)
@@ -695,7 +695,8 @@ void storeCredentials(const String &ssid, const String &password)
         // error opening the file
 		Serial.println(FPSTR(errorOpenConfigWrite));
 		simpleDisplay(String(FPSTR(errorOpenConfigWrite)));
-        ESP.restart();
+        // we do nothing, waiting for user intervention
+        while (true) { delay(1000); }
 	}
 	wifiConfigFile.println(ssid);
 	wifiConfigFile.println(password);
@@ -712,8 +713,10 @@ void getCredentials(String &ssid, String &password)
 	{
 		Serial.println(FPSTR(errorOpenSPIFFS));
 		simpleDisplay(String(FPSTR(errorOpenSPIFFS)));
-        delay(5000);
-        ESP.restart();
+        ssid = "";
+        password = "";
+        delay(3000);
+        return;
 	}
 	File wifiConfigFile = SPIFFS.open("/config.txt", "r");
 	if (!wifiConfigFile)
@@ -721,8 +724,10 @@ void getCredentials(String &ssid, String &password)
         // error opening the file
 		Serial.println(FPSTR(errorOpenConfigRead));
 		simpleDisplay(String(FPSTR(errorOpenConfigRead)));
-        delay(5000);
-        ESP.restart();
+        ssid = "";
+        password = "";
+        delay(3000);
+        return;
 	}
 	ssid = wifiConfigFile.readStringUntil('\r');
 	wifiConfigFile.read(); // line ending is CR&LF so we read the \n character
