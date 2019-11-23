@@ -10,9 +10,12 @@
 #include <DHT_U.h>
 #include <TimeLib.h>
 #include <NtpClientLib.h>
+#include <WebServer.h>
+#include <SPIFFS.h>
 #include "DSEG7Classic-Bold6pt.h"
 #include "firebase_certificate.h"
 #include "consts.h"
+#include "webpage.h"
 
 enum class Button
 {
@@ -128,6 +131,7 @@ private:
 
 Adafruit_PCD8544 display = Adafruit_PCD8544(pinDC, pinCS, pinRST);
 StreamingHttpClient firebaseClient;
+WebServer server(80);
 DHT_Unified dht(dhtPin, dhtType);
 // did this so you can easily change the type of sensor used (if it supports the Unified Sensor library), not sure if it's the best way though
 DHT_Unified::Temperature tSens = dht.temperature();
@@ -172,6 +176,10 @@ void setupSetupWifi();
 void loopSetupWifi();
 void setupOTAUpdate();
 void loopOTAUpdate();
+void setupWifiHandleRoot();
+void setupWifiHandlePost();
+void storeCredentials(const String& ssid, const String& password);
+void setupWifiDisplayInfo();
 
 void setup()
 {
@@ -533,17 +541,130 @@ void loopCore0(void *param)
 
 void setupSetupWifi()
 {
-    Serial.println("setup wifi setup!");
+    Serial.println("SetupWifi setup");
+    setupWifiDisplayInfo();
+
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(setupWifiAPSSID, setupWifiAPPassword);
+    delay(1000); // delay to let the AP initialize
+    WiFi.softAPConfig(setupWifiServerIP, setupWifiServerIP, IPAddress(255, 255, 255, 0));
+
+    server.on("/", setupWifiHandleRoot);
+    server.on("/post", HTTPMethod::HTTP_POST, setupWifiHandlePost);
+    server.begin();
+    Serial.println("Server started");
 }
 
 void loopSetupWifi()
 {
-
+    server.handleClient();
 }
 
 void setupOTAUpdate()
 {
     Serial.println("ota update setup!");
+}
+
+
+void setupWifiDisplayInfo()
+{
+    display.clearDisplay();
+	display.setTextSize(1);
+	display.setTextColor(BLACK);
+	display.setCursor(0, 0);
+	display.println(F("Connect to:"));
+	display.println(setupWifiAPSSID);
+	display.println(F("With password:"));
+	display.println(setupWifiAPPassword);
+	display.display();
+}
+
+// function called when a client accesses the root of the server, sends back to the client a webpage with a form
+void setupWifiHandleRoot()
+{
+	server.send(HTTP_CODE_OK, "text/html", String(FPSTR(setupWifiPage)));
+}
+
+// function called when a client sends a POST request to the server, at location /post, stores the SSID and password from the request in SPIFFS
+void setupWifiHandlePost()
+{
+    if (!server.hasArg("ssid") || !server.hasArg("password"))
+	{
+		server.send(HTTP_CODE_BAD_REQUEST, "text/plain", String(FPSTR(serverNotAllArgsPresent)));
+		Serial.println(FPSTR(serverNotAllArgsPresent));
+		return;
+	}
+	server.send(HTTP_CODE_OK, "text/plain", String(FPSTR(serverReceivedArgs)));
+	String ssid = server.arg("ssid");
+	String password = server.arg("password");
+	Serial.printf("[%s]", ssid.c_str());
+    Serial.printf("[%s]", password.c_str());
+    
+    storeCredentials(ssid, password);
+    // we display a success message and restart the ESP
+	display.clearDisplay();
+	display.setCursor(0, 0);
+    display.setTextColor(BLACK);
+	display.println(FPSTR(gotCredentials));
+	display.println(ssid);
+	display.println(password);
+	display.display();
+    delay(5000);
+    ESP.restart();
+}
+
+// stores the provided Wifi credentials in SPIFFS
+void storeCredentials(const String &ssid, const String &password)
+{
+    if (!SPIFFS.begin())
+	{
+		Serial.println(FPSTR(errorOpenSPIFFS));
+		simpleDisplay(String(FPSTR(errorOpenSPIFFS)));
+        delay(5000);
+        ESP.restart();
+	}
+	File wifiConfigFile = SPIFFS.open("/config.txt", "w+");
+	if (!wifiConfigFile)
+	{
+        // error opening the file
+		Serial.println(FPSTR(errorOpenConfigWrite));
+		simpleDisplay(String(FPSTR(errorOpenConfigWrite)));
+        ESP.restart();
+	}
+	wifiConfigFile.println(ssid);
+	wifiConfigFile.println(password);
+	wifiConfigFile.close();
+	SPIFFS.end();
+	Serial.println("Stored credentials successfully");
+}
+
+// gets the Wifi login credentials from the SPIFFS
+void getCredentials(String &ssid, String &password)
+{
+	if (!SPIFFS.begin())
+	{
+		Serial.println(FPSTR(errorOpenSPIFFS));
+		simpleDisplay(String(FPSTR(errorOpenSPIFFS)));
+        delay(5000);
+        ESP.restart();
+	}
+	File wifiConfigFile = SPIFFS.open("/config.txt", "r");
+	if (!wifiConfigFile)
+	{
+        // error opening the file
+		Serial.println(FPSTR(errorOpenConfigRead));
+		simpleDisplay(String(FPSTR(errorOpenConfigRead)));
+        delay(5000);
+        ESP.restart();
+	}
+	ssid = wifiConfigFile.readStringUntil('\r');
+	wifiConfigFile.read(); // line ending is CR&LF so we read the \n character
+	password = wifiConfigFile.readStringUntil('\r');
+	wifiConfigFile.read(); // line ending is CR&LF so we read the \n character
+	wifiConfigFile.close();
+	SPIFFS.end();
+	Serial.println("SSID: [" + ssid + "]");
+	Serial.println("Password: [" + password + "]");
 }
 
 void loopOTAUpdate()
@@ -1171,12 +1292,7 @@ void manualTimeHelper(int h, int m, int d, int mth, int y, int sel)
 	display.display();
 }
 
-// gets the wifi login credentials from the flash memory
-void getCredentials(String &ssid, String &password)
-{
-	ssid = "***REMOVED***";
-	password = "***REMOVED***";
-}
+
 
 // connects to wifi
 // if it can't connect in waitingTimeConnectWifi milliseconds, it aborts

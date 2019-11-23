@@ -23,8 +23,9 @@ const char ntpServer[] PROGMEM = "pool.ntp.org";
 const int8_t timezoneOffset = 2; // in Romania, the timezone is UTC+2
 const int8_t timezoneOffsetMinutes = 0; // for timezones that are not whole numbers, for example UTC+2.5 will be written as timezoneOffset = 2, timezoneOffsetMinutes = 30
 const bool timezoneDST = true; // true if the timezone uses Daylight Saving (Summer time, Winter time)
-const char ap_ssid[] = "TermostatSetupWifi"; // not progmem because softAP takes char* args
-const char ap_password[] = "Termostat123"; // idem
+const char setupWifiAPSSID[] = "Termostat"; // not PROGMEM because Wifi.softAP() takes in const char* args
+const char setupWifiAPPassword[] = "Termostat123"; // not PROGMEM because Wifi.softAP() takes in const char* args
+const IPAddress setupWifiServerIP(192, 168, 1, 1);
 const unsigned long waitingTimeInStartupMenu = 5000; // the time after which the normal operation option is automatically selected if no button is pressed, in milliseconds
 const uint8_t pinDC = 21; // DC pin for display
 const uint8_t pinCS = 5; // CS pin for display
