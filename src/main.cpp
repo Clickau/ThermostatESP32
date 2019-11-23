@@ -12,6 +12,7 @@
 #include <NtpClientLib.h>
 #include <WebServer.h>
 #include <SPIFFS.h>
+#include <ArduinoOTA.h>
 #include "DSEG7Classic-Bold6pt.h"
 #include "firebase_certificate.h"
 #include "consts.h"
@@ -562,9 +563,73 @@ void loopSetupWifi()
 
 void setupOTAUpdate()
 {
-    Serial.println("ota update setup!");
+    Serial.println("OTAUpdate setup");
+
+    if (!connectSTAMode())
+    {
+        Serial.println(FPSTR(errorWifiConnect));
+        simpleDisplay(String(FPSTR(errorWifiConnect)));
+        // if wifi doesn't work, we do nothing
+        while (true) { delay(100); }
+    }
+    Serial.println(FPSTR(updateWaiting));
+    simpleDisplay(FPSTR(updateWaiting));
+    ArduinoOTA.setHostname(otaHostname);
+    ArduinoOTA
+        .onStart([]()
+        {
+            Serial.println(FPSTR(updateStarted));
+		    simpleDisplay(String(FPSTR(updateStarted)));
+        })
+        .onEnd([]()
+        {
+            Serial.println(FPSTR(updateEnded));
+		    simpleDisplay(String(FPSTR(updateEnded)));
+        })
+        .onProgress([](unsigned int progress, unsigned int total)
+        {
+            display.clearDisplay();
+            Serial.printf_P(updateProgress, progress * 100 / total);
+            display.printf_P(updateProgress, progress * 100 / total);
+            display.display();
+        })
+        .onError([](ota_error_t error)
+        {
+            display.clearDisplay();
+            display.setTextColor(BLACK);
+            display.setTextSize(1);
+            switch (error)
+            {
+                case OTA_AUTH_ERROR:
+                    Serial.println(FPSTR(updateErrorAuth));
+                    display.println(FPSTR(updateErrorAuth));
+                    break;
+                case OTA_BEGIN_ERROR:
+                    Serial.println(FPSTR(updateErrorBegin));
+                    display.println(FPSTR(updateErrorBegin));
+                    break;
+                case OTA_CONNECT_ERROR:
+                    Serial.println(FPSTR(updateErrorConnect));
+                    display.println(FPSTR(updateErrorConnect));
+                    break;
+                case OTA_RECEIVE_ERROR:
+                    Serial.println(FPSTR(updateErrorReceive));
+                    display.println(FPSTR(updateErrorReceive));
+                    break;
+                case OTA_END_ERROR:
+                    Serial.println(FPSTR(updateErrorEnd));
+                    display.println(FPSTR(updateErrorEnd));
+                    break;
+            }
+            display.display();
+        });
+        ArduinoOTA.begin();
 }
 
+void loopOTAUpdate()
+{
+    ArduinoOTA.handle();
+}
 
 void setupWifiDisplayInfo()
 {
@@ -666,12 +731,6 @@ void getCredentials(String &ssid, String &password)
 	Serial.println("SSID: [" + ssid + "]");
 	Serial.println("Password: [" + password + "]");
 }
-
-void loopOTAUpdate()
-{
-
-}
-
 
 // function which looks at each schedule in the scheduleString, decides which has the top priority, and returns the signal to send to the heater
 bool evaluateSchedule()
