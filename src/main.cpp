@@ -681,7 +681,8 @@ void setupWifiHandlePost()
 // stores the provided Wifi credentials in SPIFFS
 void storeCredentials(const String &ssid, const String &password)
 {
-    if (!SPIFFS.begin())
+    // we begin SPIFFS with formatOnFail=true, so that, if the initial begin fails, it will format the filesystem and try again
+    if (!SPIFFS.begin(true))
 	{
 		Serial.println(FPSTR(errorOpenSPIFFS));
 		simpleDisplay(String(FPSTR(errorOpenSPIFFS)));
@@ -706,7 +707,8 @@ void storeCredentials(const String &ssid, const String &password)
 // gets the Wifi login credentials from the SPIFFS
 void getCredentials(String &ssid, String &password)
 {
-	if (!SPIFFS.begin())
+    // we begin SPIFFS with formatOnFail=true, so that, if the initial begin fails, it will format the filesystem and try again
+	if (!SPIFFS.begin(true))
 	{
 		Serial.println(FPSTR(errorOpenSPIFFS));
 		simpleDisplay(String(FPSTR(errorOpenSPIFFS)));
