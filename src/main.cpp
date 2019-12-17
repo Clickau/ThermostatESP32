@@ -1,111 +1,22 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include <string.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClient.h>
-#include <FS.h>
-#include <SPI.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_PCD8544.h>
-#include <ArduinoOTA.h>
-#include <WiFiUdp.h>
 #include <Adafruit_Sensor.h>
 #include <DHT.h>
 #include <DHT_U.h>
 #include <TimeLib.h>
 #include <NtpClientLib.h>
+#include <WebServer.h>
+#include <SPIFFS.h>
+#include <ArduinoOTA.h>
 #include "DSEG7Classic-Bold6pt.h"
 #include "firebase_certificate.h"
-
-#define DEGREESYMB (char)247
-
-
-const char errorOpenSPIFFS[] PROGMEM = "Critical Error\nOpening SPIFFS";
-const char errorOpenConfigWrite[] PROGMEM = "Critical Error\nOpening config\nfor writing";
-const char errorOpenConfigRead[] PROGMEM = "Error\nOpening config\ntry Setup";
-const char errorWifiConnect[] PROGMEM = "Error\nConnecting to\nWifi";
-const char errorNTP[] PROGMEM = "Error\nGetting NTP\nEnter it\nmanually";
-const char serverNotAllArgsPresent[] PROGMEM = "Not all the arguments are present";
-const char serverReceivedArgs[] PROGMEM = "OK";
-const char gotCredentials[] PROGMEM = "Got credetials";
-const char updateStarted[] PROGMEM = "Update Started";
-const char updateEnded[] PROGMEM = "Update Ended";
-const char updateError[] PROGMEM = "Update Failed";
-const char normalModeMessage[] PROGMEM = "Normal Op.";
-const char setupWifiMessage[] PROGMEM = "Setup Wifi";
-const char otaUpdateMessage[] PROGMEM = "OTA Update";
-const char startupMenuMessage[] PROGMEM = "Startup Menu";
-const char ntpServer[] PROGMEM = "pool.ntp.org";
-const int8_t timezoneOffset = 2; // in Romania, the timezone is UTC+2
-const int8_t timezoneOffsetMinutes = 0; // for timezones that are not whole numbers, for example UTC+2.5 will be written as timezoneOffset = 2, timezoneOffsetMinutes = 30
-const bool timezoneDST = true; // true if the timezone uses Daylight Saving (Summer time, Winter time)
-const char ap_ssid[] = "TermostatSetupWifi"; // not progmem because softAP takes char* args
-const char ap_password[] = "Termostat123"; // idem
-const unsigned long waitingTimeInStartupMenu = 5000; // the time after which the normal operation option is automatically selected if no button is pressed, in milliseconds
-const uint8_t pinDC = 21; // DC pin for display
-const uint8_t pinCS = 5; // CS pin for display
-const uint8_t pinRST = 22; // RST pin for display
-const uint8_t displayContrast = 40;
-const unsigned long waitingTimeConnectWifi = 10000; // the time we wait for it to connect to the wifi network, in normal operation mode and OTA mode, in milliseconds
-const int ntpInterval = 900; // the time interval after which we update the time, in seconds
-const int timesTryNTP = 3; // how many times we try to download the time from the internet, before we either enter manual mode, if it happens at startup, or we show an NTP error
-const char gotTime[] PROGMEM = "Got Time:";
-const char manualTimeString[] PROGMEM = "Manual Time";
-const char manualTimeFormatString[] PROGMEM = "%.2d"; // format string used in the manual time menu for displaying the hour, minute, date and month; just puts a 0 in front of them if they are less than 2 digits
-const char firebasePath[] PROGMEM = "arduino-test-8c103.firebaseio.com"; // the URL of the Firebase
-const char auth[] PROGMEM = "wwy3KljIFEEM5Cv4nEbVGSkeKXG1rcooeKrUPmjO"; // Firebase secret key
-const char schedulePath[] PROGMEM = "/Program"; // the path to the schedules
-const float tempThreshold = 0.5f; // the temperature difference needed between the set temperature and the current room temperature to trigger the heater
-const int timesTryFirebase = 2; // how many times we try to download the schedules from FB, before showing error
-const unsigned long intervalRetryErrors = 300000; // the time interval after which we try to solve the error, for example reconnecting to wifi, reconnecting to Firebase
-const uint8_t dhtPin = 33; // pin for the One Wire communication with DHT module
-const uint8_t dhtType = DHT22; // module type
-const unsigned long intervalUpdateTemperature = 10000; // the interval after which we update temperature
-const int maxNumberOfSensors = 7; // de scapat de senzori externi deocamdata
-const char temporaryScheduleString[] PROGMEM = "Program Temp.";
-const char temporaryScheduleSensorString[] PROGMEM = "Sensor:%d\n";
-const char temporaryScheduleTempString[] PROGMEM = "Temp:%.1fC\n";
-const char temporaryScheduleDuration1String[] PROGMEM = "Duration:%dm\n";
-const char temporaryScheduleDuration2String[] PROGMEM = "Duration:%.1fh\n";
-const char temporaryScheduleDurationInfiniteString[] PROGMEM = "Duration:inf.\n";
-const char temporaryScheduleOkString[] PROGMEM = "OK";
-const char temporaryScheduleCancelString[] PROGMEM = "CANCEL";
-const char temporaryScheduleDeleteString[] PROGMEM = "DEL";
-const unsigned long waitingTimeInTemporaryScheduleMenu = 5000; // if, after opening the temporary schedule menu, no button is pressed for this many milliseconds, we go back to normal operation
-const float temporaryScheduleTempResolution = 0.5f; // the minimum increment in temperature in the temporary schedule menu, for example if it if 0.5f, you can set the target temperature to 20 degrees or 20.5, but not 20.2
-const char displayHumidityNotAvailableString[] PROGMEM = "N\\A"; //displays 'N\A' if the humidity can't be read
-const char displayHumidityString[] PROGMEM = "%.2d%%"; //the %d is a placeholder for the relative humidity (integer), and %% just writes %
-const char displayDateLine1String[] PROGMEM = "%s. %d\n"; //the %s is a placeholder for the short weekday (e.g. Mon) and %d for the date (e.g. 2)
-const char displayDateLine2String[] PROGMEM = "%.2d.%d"; //the %.2d is a placeholder for the month(with a leading 0 if needed, e.g. 08 or 12) and the %d for the year
-const char displayTempLetter = 'C'; //C for Celsius, it is the letter displayed next to the degree sign and the temperature, doesn't actually change the scale
-const char displayClockFormatString[] PROGMEM = "%.2d:%.2d";// the first %d is a placeholder for the hour, and the second one, for the minute
-const char displayErrorWifiString[] PROGMEM = "!W"; // displays this if wifi doesn't work
-const char displayErrorNTPString[] PROGMEM = "!N"; // displays this if NTP doesn't work
-const char displayErrorFirebaseString[] PROGMEM = "!F"; // displays this if Firebase doesn't work
-const char displayErrorTemperatureString[] PROGMEM = "!T"; // displays this if the temperature sensor doesn't work
-const char displayErrorHumidityString[] PROGMEM = "!H"; // displays this if the humidity sensor doesn't work
-const int heaterPin = 32; // pin that controls the relay (through a mosfet) which controls the heater
-// the buttons are pulled down through software, need to be active high
-const int pinUp = 25; // up button
-const int pinDown = 26; // down button
-const int pinEnter = 27; // enter button
-
-//contains the pixel values that make up the flame icon displayed when the heater is on
-const byte flame[] PROGMEM = {
-B00010000,
-B00111000,
-B00100100,
-B00100010,
-B01001011,
-B11011101,
-B10011101,
-B10111111,
-B10111111,
-B11111111,
-B01111110,
-B00111100,
-};
+#include "consts.h"
+#include "webpage.h"
 
 enum class Button
 {
@@ -115,6 +26,7 @@ enum class Button
 	Down = 2
 };
 
+int operatingMode = -1; // 0 = Normal Operation, 1 = Setup Wifi, 2 = OTAUpdate
 bool heaterState = false;
 String scheduleString;
 bool wifiWorking = true;
@@ -220,6 +132,7 @@ private:
 
 Adafruit_PCD8544 display = Adafruit_PCD8544(pinDC, pinCS, pinRST);
 StreamingHttpClient firebaseClient;
+WebServer server(80);
 DHT_Unified dht(dhtPin, dhtType);
 // did this so you can easily change the type of sensor used (if it supports the Unified Sensor library), not sure if it's the best way though
 DHT_Unified::Temperature tSens = dht.temperature();
@@ -233,27 +146,15 @@ TaskHandle_t loopCore0Handle;
 
 Button buttonPressed();
 Button virtualButtonPressed();
-void normalOperationSetup();
-void normalOperationLoop();
 void updateTemp();
 void updateHum();
 void manualTimeSetup();
 void simpleDisplay(const String &str);
 void manualTimeHelper(int h, int m, int d, int mth, int y, int sel);
-void setupWifiSetup();
-void wifiSetupHandleRoot();
-void wifiSetupHandlePost();
 void getCredentials(String &ssid, String &password);
-void storeCredentials(const String &_ssid, const String &_password);
 bool connectSTAMode();
-void otaUpdateSetup();
-void setupWifiLoop();
-void otaUpdateLoop();
-void showWifiSetupMenu();
-void virtualShowWifiSetupMenu();
 void showStartupMenu();
-void displayStartupMenu(int highlightedOption);
-void virtualDisplayStartupMenu(int highlightedOption);
+void startupMenuHelper(int highlightedOption);
 void sendSignalToHeater(bool signal);
 void virtualSendSignalToHeater(bool signal);
 void updateDisplay();
@@ -270,190 +171,17 @@ bool scheduleIsActive(const JsonObject& schedule);
 bool compareTemperatureWithSetTemperature(float temp, float setTemp);
 void setupCore0(void *param);
 void loopCore0(void *param);
+void setupNormalOperation();
+void loopNormalOperation();
+void setupSetupWifi();
+void loopSetupWifi();
+void setupOTAUpdate();
+void loopOTAUpdate();
+void setupWifiHandleRoot();
+void setupWifiHandlePost();
+void storeCredentials(const String& ssid, const String& password);
+void setupWifiDisplayInfo();
 
-/*void setup()
-{
-    pinMode(heaterPin, OUTPUT);
-	sendSignalToHeater(false); // we stop the heater at startup
-	Serial.begin(115200); // in serial monitor, use the CR & NL option for line ending (probably not mandatory)
-	display.clearDisplay(); // gets rid of the adafruit logo at the beginning
-	display.begin();
-	display.setContrast(displayContrast);
-
-	// normal operation setup
-	dht.begin();
-	Serial.println("Mod selectat Functionare Normala");
-	if (!connectSTAMode())
-	{
-		// error connecting to wifi
-		Serial.println(FPSTR(errorWifiConnect));
-		simpleDisplay(String(FPSTR(errorWifiConnect)));
-		wifiWorking = false;
-	}
-	NTP.begin(String(FPSTR(ntpServer)), timezoneOffset, timezoneDST, timezoneOffsetMinutes);
-	NTP.setInterval(ntpInterval, ntpInterval);
-	if (wifiWorking)
-	{
-		// if wifi works, we try to get NTP time
-		Serial.println("trying to get time");
-		int i = 0;
-		while (NTP.getLastNTPSync() == 0 && i < timesTryNTP) // we try timesTryNTP times, before giving up
-		{
-			Serial.printf("attempt nr %d\n", i);
-			delay(500); // wait 500 ms
-			time_t t = NTP.getTime();
-			if (t != 0)
-				setTime(t);
-			i++;
-			// problem here: if i disconnect the internet cable from the router and reconnect it during the while, sometimes the esp is reset by the hardware wdt (??)
-		}
-		// if we didn't succeed, we enter manual time setup
-		if (NTP.getLastNTPSync() == 0)
-		{
-			NTPWorking = false;
-			Serial.println(FPSTR(errorNTP));
-			simpleDisplay(String(FPSTR(errorNTP)));
-			delay(3000);
-			manualTimeSetup();
-		}
-	}
-	else
-	{
-		// bypassed NTP download because wifi doesn't work
-		Serial.println("bypassed ntp because wifi doesnt work");
-		NTPWorking = false;
-		delay(3000);
-		manualTimeSetup();
-	}
-	Serial.println("got time:");
-	Serial.println(NTP.getTimeDateString());
-
-	display.clearDisplay();
-	display.setCursor(0, 0);
-	display.println(FPSTR(gotTime));
-	display.println(NTP.getTimeStr());
-	display.println(NTP.getDateStr());
-	display.display();
-	if (wifiWorking)
-	{
-		Serial.println("initialize firebase");
-		firebaseWorking = firebaseClient.initializeStream();
-	}
-	else
-	{
-		Serial.println("bypassed firebase init because wifi doesnt work");
-		firebaseWorking = false;
-	}
-}*/
-
-/*void loop()
-{
-	// normal operation loop
-	if (firebaseWorking)
-	{
-		if (firebaseClient.consumeStreamIfAvailable())
-		{
-			// something in the database changed, we download the whole database
-			// we try it for timesTryFirebase times, before we give up
-			Serial.println("new change!");
-			int result;
-			int i = 0;
-			do
-			{
-				Serial.printf("attempt nr %d\n", i);
-				HTTPClient getHttp;
-				getHttp.begin(String(F("https://")) + FPSTR(firebasePath) + FPSTR(schedulePath) + F(".json?auth=") + FPSTR(auth), firebaseFingerprint);
-				result = getHttp.GET();
-				if (result != HTTP_CODE_OK)
-				{
-					Serial.println("error getHttp");
-					Serial.println(result);
-					getHttp.end();
-				}
-				else
-				{
-					// if everything worked corectly, we store the received string, which contains the json representation of the schedules
-					scheduleString = getHttp.getString();
-					getHttp.end();
-					break;
-				}
-				i++;
-			} while (i < timesTryFirebase);
-			if (result != HTTP_CODE_OK)
-			{
-				Serial.println("failed to get program");
-				firebaseWorking = false;
-			}
-			else
-			{
-				Serial.println("got new program");
-			}
-		}
-	}
-	// we check if wifi works
-	wifiWorking = WiFi.isConnected();
-	// if we have never succesfully downloaded the time, or if timesTryNTP * ntpInterval time has passed since the last succesfull time sync, we set NTPWorking to false
-	NTPWorking = NTP.getLastNTPSync() != 0 && now() - NTP.getLastNTPSync() < timesTryNTP * ntpInterval;
-	// once every intervalRetryError milliseconds, we try to solve the errors, i.e. reconnect to wifi, firebase etc
-	if (millis() - lastRetryErrors > intervalRetryErrors)
-	{
-		Serial.println("trying to fix errors, if any");
-		lastRetryErrors = millis();
-		if (!wifiWorking)
-		{
-			WiFi.disconnect(true);
-			wifiWorking = connectSTAMode();
-		}
-		if (!firebaseWorking && wifiWorking)
-		{
-			firebaseWorking = firebaseClient.initializeStream();
-		}
-		Serial.printf("wifiWorking:%d ", wifiWorking);
-		Serial.printf("NTPWorking:%d ", NTPWorking);
-		Serial.printf("humWorking:%d ", humWorking);
-		Serial.printf("tempWorking: %d\n", tempWorking);
-	}
-	// we update temperature, humidity every intervalUpdateTemperature milliseconds, and we reevaluate the schedule
-	if (millis() - lastTemperatureUpdate >= intervalUpdateTemperature)
-	{
-		lastTemperatureUpdate = millis();
-		updateTemp();
-		updateHum();
-		// if a temporary schedule is active, we ignore the normal schedule and follow it
-		// otherwise, we evaluate the normal schedule
-		if (temporaryScheduleActive)
-		{
-			if (now() < temporaryScheduleEnd || temporaryScheduleEnd == -1)
-			{
-				bool signal = compareTemperatureWithSetTemperature(temperature, temporaryScheduleTemp);
-				sendSignalToHeater(signal);
-			}
-			else
-			{
-				// if the temporary schedule has expired, we deactivate it
-				temporaryScheduleActive = false;
-			}
-			
-		}
-		else
-		{
-			bool signal = evaluateSchedule();
-			sendSignalToHeater(signal);
-		}
-	}
-	// check if enter was pressed
-	// in the future, this will run alone with updateDisplay on a separate core, on the esp32
-	Button pressed = buttonPressed();
-	if (pressed == Button::Enter)
-	{
-		Serial.println("enter was pressed");
-		temporaryScheduleSetup();
-	}
-	updateDisplay();
-}*/
-
-// core 1
-// just for UI (display and buttons)
 void setup()
 {
     // stopping the heater right at startup
@@ -463,11 +191,132 @@ void setup()
     pinMode(pinEnter, INPUT_PULLDOWN);
     sendSignalToHeater(false);
     Serial.begin(115200);
-    display.begin();
     display.clearDisplay();
+    display.begin();
     display.setContrast(displayContrast);
 
+    // menu where the user selects which operation mode should be used
+    showStartupMenu();
+}
 
+void showStartupMenu()
+{
+    // operation mode:  0 - Normal Operation
+    //                  1 - Setup Wifi
+    //                  2 - OTA Update
+    // first the selected option is Normal Operation
+	startupMenuHelper(0);
+	int currentHighlightedValue = 0;
+	unsigned long previousTime = millis();
+	bool autoselect = true;
+	Button lastButtonPressed = buttonPressed();
+	while (lastButtonPressed != Button::Enter)
+	{
+		if (lastButtonPressed == Button::Up)
+		{
+			Serial.println("Sus a fost apasat in metoda showStartupMenu");
+			autoselect = false;
+			if (currentHighlightedValue != 0)
+				currentHighlightedValue--;
+			else
+				currentHighlightedValue = 2;
+			startupMenuHelper(currentHighlightedValue);
+		}
+		else if (lastButtonPressed == Button::Down)
+		{
+			Serial.println("Jos a fost apasat in metoda showStartupMenu");
+			autoselect = false;
+			if (currentHighlightedValue != 2)
+				currentHighlightedValue++;
+			else
+				currentHighlightedValue = 0;
+			startupMenuHelper(currentHighlightedValue);
+		}
+		if (autoselect && (millis() - previousTime >= waitingTimeInStartupMenu))
+		{
+			break;
+		}
+		lastButtonPressed = buttonPressed();
+	}
+    // we clear the display before entering the chosen setup
+    display.clearDisplay();
+    display.display();
+	if (autoselect)
+	{
+		operatingMode = 0;
+		setupNormalOperation();
+		return;
+	}
+	Serial.println("Enter a fost apasat in metoda showStartupMenu");
+	operatingMode = currentHighlightedValue;
+	switch (currentHighlightedValue)
+	{
+	case 0:
+		setupNormalOperation();
+		break;
+	case 1:
+		setupSetupWifi();
+		break;
+	case 2:
+		setupOTAUpdate();
+		break;
+	}
+}
+
+void startupMenuHelper(int highlightedOption)
+{
+	display.clearDisplay();
+	display.setTextSize(1);
+	display.setCursor(0, 0);
+
+	display.println(FPSTR(startupMenuTitle));
+
+	if (highlightedOption == 0)
+        display.setTextColor(WHITE, BLACK);
+    else
+        display.setTextColor(BLACK);
+
+	display.println(FPSTR(normalModeMenuEntry));
+
+	if (highlightedOption == 1)
+		display.setTextColor(WHITE, BLACK);
+    else
+        display.setTextColor(BLACK);
+
+	display.println(FPSTR(setupWifiMenuEntry));
+    
+	if (highlightedOption == 2)
+		display.setTextColor(WHITE, BLACK);
+    else
+        display.setTextColor(BLACK);
+
+	display.println(FPSTR(otaUpdateMenuEntry));
+
+    display.setTextColor(BLACK);
+
+	display.display();
+}
+
+void loop()
+{
+    switch(operatingMode)
+    {
+        case 0:
+            loopNormalOperation();
+            break;
+        case 1:
+            loopSetupWifi();
+            break;
+        case 2:
+            loopOTAUpdate();
+            break;
+    }
+}
+
+// core 1
+// just for UI (display and buttons)
+void setupNormalOperation()
+{
     bool doneInit = false;
 
     xTaskCreatePinnedToCore(
@@ -523,7 +372,7 @@ void setup()
 
 }
 
-void loop()
+void loopNormalOperation()
 {
     Button pressed = buttonPressed();
 	if (pressed == Button::Enter)
@@ -691,6 +540,204 @@ void loopCore0(void *param)
     }
 }
 
+void setupSetupWifi()
+{
+    Serial.println("SetupWifi setup");
+    setupWifiDisplayInfo();
+
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(setupWifiAPSSID, setupWifiAPPassword);
+    delay(1000); // delay to let the AP initialize
+    WiFi.softAPConfig(setupWifiServerIP, setupWifiServerIP, IPAddress(255, 255, 255, 0));
+
+    server.on("/", setupWifiHandleRoot);
+    server.on("/post", HTTPMethod::HTTP_POST, setupWifiHandlePost);
+    server.begin();
+    Serial.println("Server started");
+}
+
+void loopSetupWifi()
+{
+    server.handleClient();
+}
+
+void setupOTAUpdate()
+{
+    Serial.println("OTAUpdate setup");
+
+    if (!connectSTAMode())
+    {
+        Serial.println(FPSTR(errorWifiConnect));
+        simpleDisplay(String(FPSTR(errorWifiConnect)));
+        // if wifi doesn't work, we do nothing
+        while (true) { delay(100); }
+    }
+    Serial.println(FPSTR(updateWaiting));
+    simpleDisplay(FPSTR(updateWaiting));
+    ArduinoOTA.setHostname(otaHostname);
+    ArduinoOTA
+        .onStart([]()
+        {
+            Serial.println(FPSTR(updateStarted));
+		    simpleDisplay(String(FPSTR(updateStarted)));
+        })
+        .onEnd([]()
+        {
+            Serial.println(FPSTR(updateEnded));
+		    simpleDisplay(String(FPSTR(updateEnded)));
+        })
+        .onProgress([](unsigned int progress, unsigned int total)
+        {
+            display.clearDisplay();
+            Serial.printf_P(updateProgress, progress * 100 / total);
+            display.printf_P(updateProgress, progress * 100 / total);
+            display.display();
+        })
+        .onError([](ota_error_t error)
+        {
+            display.clearDisplay();
+            display.setTextColor(BLACK);
+            display.setTextSize(1);
+            switch (error)
+            {
+                case OTA_AUTH_ERROR:
+                    Serial.println(FPSTR(updateErrorAuth));
+                    display.println(FPSTR(updateErrorAuth));
+                    break;
+                case OTA_BEGIN_ERROR:
+                    Serial.println(FPSTR(updateErrorBegin));
+                    display.println(FPSTR(updateErrorBegin));
+                    break;
+                case OTA_CONNECT_ERROR:
+                    Serial.println(FPSTR(updateErrorConnect));
+                    display.println(FPSTR(updateErrorConnect));
+                    break;
+                case OTA_RECEIVE_ERROR:
+                    Serial.println(FPSTR(updateErrorReceive));
+                    display.println(FPSTR(updateErrorReceive));
+                    break;
+                case OTA_END_ERROR:
+                    Serial.println(FPSTR(updateErrorEnd));
+                    display.println(FPSTR(updateErrorEnd));
+                    break;
+            }
+            display.display();
+        });
+        ArduinoOTA.begin();
+}
+
+void loopOTAUpdate()
+{
+    ArduinoOTA.handle();
+}
+
+void setupWifiDisplayInfo()
+{
+    display.clearDisplay();
+	display.setTextSize(1);
+	display.setTextColor(BLACK);
+	display.setCursor(0, 0);
+	display.println(F("Connect to:"));
+	display.println(setupWifiAPSSID);
+	display.println(F("With password:"));
+	display.println(setupWifiAPPassword);
+	display.display();
+}
+
+// function called when a client accesses the root of the server, sends back to the client a webpage with a form
+void setupWifiHandleRoot()
+{
+	server.send(HTTP_CODE_OK, "text/html", String(FPSTR(setupWifiPage)));
+}
+
+// function called when a client sends a POST request to the server, at location /post, stores the SSID and password from the request in SPIFFS
+void setupWifiHandlePost()
+{
+    if (!server.hasArg("ssid") || !server.hasArg("password"))
+	{
+		server.send(HTTP_CODE_BAD_REQUEST, "text/plain", String(FPSTR(serverNotAllArgsPresent)));
+		Serial.println(FPSTR(serverNotAllArgsPresent));
+		return;
+	}
+	server.send(HTTP_CODE_OK, "text/plain", String(FPSTR(serverReceivedArgs)));
+	String ssid = server.arg("ssid");
+	String password = server.arg("password");
+	Serial.printf("[%s]", ssid.c_str());
+    Serial.printf("[%s]", password.c_str());
+    
+    storeCredentials(ssid, password);
+    // we display a success message and restart the ESP
+	display.clearDisplay();
+	display.setCursor(0, 0);
+    display.setTextColor(BLACK);
+	display.println(FPSTR(gotCredentials));
+	display.println(ssid);
+	display.println(password);
+	display.display();
+    delay(5000);
+    ESP.restart();
+}
+
+// stores the provided Wifi credentials in SPIFFS
+void storeCredentials(const String &ssid, const String &password)
+{
+    // we begin SPIFFS with formatOnFail=true, so that, if the initial begin fails, it will format the filesystem and try again
+    if (!SPIFFS.begin(true))
+	{
+		Serial.println(FPSTR(errorOpenSPIFFS));
+		simpleDisplay(String(FPSTR(errorOpenSPIFFS)));
+        // we do nothing, waiting for user intervention
+        while (true) { delay(1000); }
+	}
+	File wifiConfigFile = SPIFFS.open("/config.txt", "w+");
+	if (!wifiConfigFile)
+	{
+        // error opening the file
+		Serial.println(FPSTR(errorOpenConfigWrite));
+		simpleDisplay(String(FPSTR(errorOpenConfigWrite)));
+        // we do nothing, waiting for user intervention
+        while (true) { delay(1000); }
+	}
+	wifiConfigFile.println(ssid);
+	wifiConfigFile.println(password);
+	wifiConfigFile.close();
+	SPIFFS.end();
+	Serial.println("Stored credentials successfully");
+}
+
+// gets the Wifi login credentials from the SPIFFS
+void getCredentials(String &ssid, String &password)
+{
+    // we begin SPIFFS with formatOnFail=true, so that, if the initial begin fails, it will format the filesystem and try again
+	if (!SPIFFS.begin(true))
+	{
+		Serial.println(FPSTR(errorOpenSPIFFS));
+		simpleDisplay(String(FPSTR(errorOpenSPIFFS)));
+        ssid = "";
+        password = "";
+        delay(3000);
+        return;
+	}
+	File wifiConfigFile = SPIFFS.open("/config.txt", "r");
+	if (!wifiConfigFile)
+	{
+        // error opening the file
+		Serial.println(FPSTR(errorOpenConfigRead));
+		simpleDisplay(String(FPSTR(errorOpenConfigRead)));
+        ssid = "";
+        password = "";
+        delay(3000);
+        return;
+	}
+	ssid = wifiConfigFile.readStringUntil('\r');
+	wifiConfigFile.read(); // line ending is CR&LF so we read the \n character
+	password = wifiConfigFile.readStringUntil('\r');
+	wifiConfigFile.read(); // line ending is CR&LF so we read the \n character
+	wifiConfigFile.close();
+	SPIFFS.end();
+	Serial.println("SSID: [" + ssid + "]");
+	Serial.println("Password: [" + password + "]");
+}
 
 // function which looks at each schedule in the scheduleString, decides which has the top priority, and returns the signal to send to the heater
 bool evaluateSchedule()
@@ -1311,12 +1358,7 @@ void manualTimeHelper(int h, int m, int d, int mth, int y, int sel)
 	display.display();
 }
 
-// gets the wifi login credentials from the flash memory
-void getCredentials(String &ssid, String &password)
-{
-	ssid = "***REMOVED***";
-	password = "***REMOVED***";
-}
+
 
 // connects to wifi
 // if it can't connect in waitingTimeConnectWifi milliseconds, it aborts
