@@ -763,7 +763,7 @@ bool evaluateSchedule()
 		if (scheduleIsActive(schedule))
 		{
 			// if a one-time schedule is active, then it has the highest priority, so we stop the loop after it
-			if (schedule["repeat"] == "None")
+			if (schedule["repeat"] == "Once")
 			{
 				float setTemp = schedule["setTemp"];
 				signal = compareTemperatureWithSetTemperature(temperature, setTemp);
@@ -809,7 +809,7 @@ bool scheduleIsActive(const JsonObject& schedule)
 		return wDay == currWeekDay && startTime <= time && time < endTime;
 	}
 	// the schedule doesn't repeat, we check if we are between the start and end time
-	if (strcmp(repeat, "None") == 0)
+	if (strcmp(repeat, "Once") == 0)
 	{
 		tmElements_t startTime;
 		tmElements_t endTime;
