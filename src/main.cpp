@@ -739,17 +739,20 @@ void getCredentials(String &ssid, String &password)
 	Serial.println("Password: [" + password + "]");
 }
 
-// function which looks at each schedule in the scheduleString, decides which has the top priority, and returns the signal to send to the heater
+// function which looks at each schedule in the scheduleString, decides which is active and has the top priority, and returns the signal to send to the heater
 bool evaluateSchedule()
 {
+    Serial.println(NTP.getTimeDateString());
 	if (isnan(temperature))
 	{
 		// the temperature can't be read (sensor error probably)
 		Serial.println("temperature is nan");
 		return false;
 	}
-	bool signal = false;
-	int highestPriority = -1;
+    // we find the active schedule from each category (daily, weekly, nonrepeating) if it exists
+    // in the end we give priority to the nonrepeating one, then to the weekly, then daily
+	bool onceScheduleActive = false, weeklyScheduleActive = false, dailyScheduleActive = false;
+    bool onceScheduleSignal = false, weeklyScheduleSignal = false, dailyScheduleSignal = false;
 	int beginIndex = 0;
 	beginIndex = scheduleString.indexOf('{', 1); // we find the first occurence of the character '{', excluding the first character; this is the beggining of the first schedule object
 	while (beginIndex != -1)
@@ -762,24 +765,47 @@ bool evaluateSchedule()
 		JsonObject schedule = doc.as<JsonObject>();
 		if (scheduleIsActive(schedule))
 		{
+			float setTemp = schedule["setTemp"];
+            const char *repeat = schedule["repeat"];
+            bool signal = compareTemperatureWithSetTemperature(temperature, setTemp);
+
 			// if a one-time schedule is active, then it has the highest priority, so we stop the loop after it
-			if (schedule["repeat"] == "Once")
+			if (strcmp(repeat, "Once") == 0)
 			{
-				float setTemp = schedule["setTemp"];
-				signal = compareTemperatureWithSetTemperature(temperature, setTemp);
+                onceScheduleActive = true;
+				onceScheduleSignal = signal;
 				break;
 			}
-			int priority = schedule["priority"];
-			if (priority > highestPriority)
-			{
-				float setTemp = schedule["setTemp"];
-				signal = compareTemperatureWithSetTemperature(temperature, setTemp);
-				highestPriority = priority;
-			}
+            
+            if (strcmp(repeat, "Weekly") == 0)
+            {
+                weeklyScheduleActive = true;
+                weeklyScheduleSignal = signal;
+            } 
+            else if (strcmp(repeat, "Daily") == 0)
+            {
+                dailyScheduleActive = true;
+                dailyScheduleSignal = signal;
+            }
 		}
 		beginIndex = scheduleString.indexOf('{', endIndex + 1); // we find the next occurence of '{', starting at endIndex; this is the beggining of the next schedule object; we repeat until there are no more objects
 	}
-	return signal;
+
+    // if there was a nonrepeating schedule active, we pass its signal on
+	if (onceScheduleActive)
+        return onceScheduleSignal;
+
+    // otherwise, if there was a weekly schedule active, we pass its signal on
+    if (weeklyScheduleActive)
+        return weeklyScheduleSignal;
+
+    // otherwise, if there was a daily schedule active, we pass its signal on
+    if (dailyScheduleActive)
+        return dailyScheduleSignal;
+
+    // if there was no schedule active, we don't turn on the heater
+    // TODO: maybe add antifreeze feature
+    return false;
 }
 
 // function that checks if the supplied schedule object is active at the moment
@@ -1464,7 +1490,6 @@ Button virtualButtonPressed()
 
 void sendSignalToHeater(bool signal)
 {
-	// to be implemented
 	heaterState = signal;
     digitalWrite(heaterPin, signal);
 	virtualSendSignalToHeater(signal);
