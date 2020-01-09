@@ -17,6 +17,7 @@
 #include "firebase_certificate.h"
 #include "consts.h"
 #include "webpage.h"
+#include "FirebaseClient.h"
 
 enum class Button
 {
@@ -30,7 +31,6 @@ int operatingMode = -1; // 0 = Normal Operation, 1 = Setup Wifi, 2 = OTAUpdate
 bool heaterState = false;
 String scheduleString;
 bool wifiWorking = true;
-bool firebaseWorking = true;
 bool NTPWorking = true;
 bool tempWorking = true;
 bool humWorking = true;
@@ -44,94 +44,8 @@ time_t temporaryScheduleEnd = 0;
 bool buttonBeingHeld = false;
 
 
-// custom HTTPClient that can handle Firebase Streaming
-class StreamingHttpClient : private HTTPClient
-{
-public:
-	// checks if anything changed in the database
-	// if it receives updates on the stream, it checks if the event is of type 'put', and if so, it means something in the database changed, so it clears the stream and returns true
-	// otherwise, it returns false
-	bool consumeStreamIfAvailable()
-	{
-		if (!connected())
-		{
-			Serial.println("Connection lost");
-			closeStream();
-			firebaseWorking = false;
-			return false;
-		}
-		WiFiClient *client = getStreamPtr();
-		if (client == nullptr)
-			return false;
-		if (!client->available())
-			return false;
-		/*
-		The received stream event has the format:
-		event: ...
-		data: ...
-		(empty line)
-		so the event type is in the first line, starting from the 7th character
-		*/
-		String eventType = client->readStringUntil('\n').substring(7);
-		// we clear the stream
-		client->readStringUntil('\n');
-		client->readStringUntil('\n');
-		// the event might be just a keep-alive, so we check if the type is 'put'
-		if (eventType != "put")
-			return false;
-		return true;
-	}
-	bool initializeStream()
-	{
-		if (_initialized)
-			closeStream();
-		_initialized = true;
-		// we keep the connection alive after the first request
-		setReuse(true);
-        // the esp32 version of httpclient doesn't manage redirects automatically
-		//setFollowRedirects(true);
-		// we open a secure connection
-        begin(_client_secure, String("https://") + firebasePath + schedulePath + ".json?auth=" + auth);
-		addHeader("Accept", "text/event-stream");
-
-        //manage redirects manually
-        const char* headers[] = {"Location"};
-        collectHeaders(headers, 1);
-
-		int status = GET();
-
-        //manage redirects manually
-        while (status == HTTP_CODE_TEMPORARY_REDIRECT)
-        {
-            String location = header("Location");
-            setReuse(false);
-            end();
-            setReuse(true);
-            begin(location);
-            status = GET();
-        }
-
-		if (status != HTTP_CODE_OK)
-			return false;
-		return true;
-	}
-	void closeStream()
-	{
-		_initialized = false;
-		setReuse(false);
-		end();
-	}
-    StreamingHttpClient()
-    {
-        _client_secure.setCACert(firebaseRootCA);
-    }
-private:
-	bool _initialized = false;
-    WiFiClientSecure _client_secure;
-};
-
 Adafruit_PCD8544 display = Adafruit_PCD8544(pinDC, pinCS, pinRST);
-StreamingHttpClient firebaseClient;
+FirebaseClient firebaseClient{firebaseRootCA, firebasePath, auth};
 WebServer server(80);
 DHT_Unified dht(dhtPin, dhtType);
 // did this so you can easily change the type of sensor used (if it supports the Unified Sensor library), not sure if it's the best way though
@@ -416,14 +330,14 @@ void setupCore0(void *param)
 		}
 
         Serial.printf("core %u: initialize firebase\n", xPortGetCoreID());
-		firebaseWorking = firebaseClient.initializeStream();
+		firebaseClient.initializeStream(schedulePath);
 	}
     else
 	{
 		Serial.printf("core %u: bypassed ntp because wifi doesnt work\n", xPortGetCoreID());
 		NTPWorking = false;
         Serial.printf("core %u: bypassed firebase init because wifi doesnt work\n", xPortGetCoreID());
-		firebaseWorking = false;
+		firebaseClient.setError(true);
 	}
 
     // the mandatory setup is done, core 1 can display the eventual errors and enter manual time setup if needed
@@ -437,47 +351,24 @@ void loopCore0(void *param)
 {
     while (1)
     {
-        if (firebaseWorking)
+        if (!firebaseClient.getError())
         {
             if (firebaseClient.consumeStreamIfAvailable())
             {
                 // something in the database changed, we download the whole database
                 // we try it for timesTryFirebase times, before we give up
                 Serial.println("new change!");
-                int result;
-                int i = 0;
-                do
+                for (int i = 0; i < timesTryFirebase; i++)
                 {
                     Serial.printf("attempt nr %d\n", i);
-                    HTTPClient getHttp;
-                    WiFiClientSecure client;
-                    client.setCACert(firebaseRootCA);
-                    getHttp.begin(client, String("https://") + firebasePath + schedulePath + ".json?auth=" + auth);
-                    result = getHttp.GET();
-                    if (result != HTTP_CODE_OK)
-                    {
-                        Serial.println("error getHttp");
-                        Serial.println(result);
-                        getHttp.end();
-                    }
-                    else
-                    {
-                        // if everything worked corectly, we store the received string, which contains the json representation of the schedules
-                        scheduleString = getHttp.getString();
-                        getHttp.end();
+                    firebaseClient.getJson(schedulePath, scheduleString);
+                    if (!firebaseClient.getError())
                         break;
-                    }
-                    i++;
-                } while (i < timesTryFirebase);
-                if (result != HTTP_CODE_OK)
-                {
-                    Serial.println("failed to get program");
-                    firebaseWorking = false;
                 }
+                if (!firebaseClient.getError())
+                    Serial.println("updated schedules");
                 else
-                {
-                    Serial.println("got new program");
-                }
+                    Serial.println("failed to update schedules");
             }
         }
         // we delay multiple times per loop iteration, so that, in case all the code gets executed, it won't block essential tasks for the esp and cause task wdt to reset
@@ -496,11 +387,12 @@ void loopCore0(void *param)
                 WiFi.disconnect(true);
                 wifiWorking = connectSTAMode();
             }
-            if (!firebaseWorking && wifiWorking)
+            if (firebaseClient.getError() && wifiWorking)
             {
-                firebaseWorking = firebaseClient.initializeStream();
+                firebaseClient.initializeStream(schedulePath);
             }
             Serial.printf("wifiWorking:%d ", wifiWorking);
+            Serial.printf("firebaseWorkiing:%d ", !firebaseClient.getError());
             Serial.printf("NTPWorking:%d ", NTPWorking);
             Serial.printf("humWorking:%d ", humWorking);
             Serial.printf("tempWorking: %d\n", tempWorking);
@@ -1145,7 +1037,7 @@ void displayErrors(int cursorX, int cursorY)
         display.write(' ');
       }
     
-    if (!firebaseWorking)
+    if (firebaseClient.getError())
     {
       display.print(displayErrorFirebaseString);
       display.write(' ');
