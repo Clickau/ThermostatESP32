@@ -1,6 +1,4 @@
-#include <Arduino.h>
-
-const char setupWifiPage[] PROGMEM = R"=====(
+const char setupWifiPage[] = R"=====(
 <!DOCTYPE html>
 <html>
     <head>

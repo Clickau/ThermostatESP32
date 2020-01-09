@@ -91,7 +91,7 @@ public:
         // the esp32 version of httpclient doesn't manage redirects automatically
 		//setFollowRedirects(true);
 		// we open a secure connection
-        begin(_client_secure, String(F("https://")) + FPSTR(firebasePath) + FPSTR(schedulePath) + F(".json?auth=") + FPSTR(auth));
+        begin(_client_secure, String("https://") + firebasePath + schedulePath + ".json?auth=" + auth);
 		addHeader("Accept", "text/event-stream");
 
         //manage redirects manually
@@ -269,28 +269,28 @@ void startupMenuHelper(int highlightedOption)
 	display.setTextSize(1);
 	display.setCursor(0, 0);
 
-	display.println(FPSTR(startupMenuTitle));
+	display.println(startupMenuTitle);
 
 	if (highlightedOption == 0)
         display.setTextColor(WHITE, BLACK);
     else
         display.setTextColor(BLACK);
 
-	display.println(FPSTR(normalModeMenuEntry));
+	display.println(normalModeMenuEntry);
 
 	if (highlightedOption == 1)
 		display.setTextColor(WHITE, BLACK);
     else
         display.setTextColor(BLACK);
 
-	display.println(FPSTR(setupWifiMenuEntry));
+	display.println(setupWifiMenuEntry);
     
 	if (highlightedOption == 2)
 		display.setTextColor(WHITE, BLACK);
     else
         display.setTextColor(BLACK);
 
-	display.println(FPSTR(otaUpdateMenuEntry));
+	display.println(otaUpdateMenuEntry);
 
     display.setTextColor(BLACK);
 
@@ -336,15 +336,15 @@ void setupNormalOperation()
     // if wifi or ntp doesn't work, we enter manual time setup
     if (!wifiWorking)
     {
-        Serial.println(FPSTR(errorWifiConnect));
-		simpleDisplay(String(FPSTR(errorWifiConnect)));
+        Serial.println(errorWifiConnect);
+		simpleDisplay(errorWifiConnect);
         delay(3000);
         manualTimeSetup();
     }
     else if (!NTPWorking)
     {
-        Serial.println(FPSTR(errorNTP));
-        simpleDisplay(String(FPSTR(errorNTP)));
+        Serial.println(errorNTP);
+        simpleDisplay(errorNTP);
         delay(3000);
         manualTimeSetup();
     }
@@ -355,7 +355,7 @@ void setupNormalOperation()
 
 	display.clearDisplay();
 	display.setCursor(0, 0);
-	display.println(FPSTR(gotTime));
+	display.println(gotTime);
 	display.println(NTP.getTimeStr());
 	display.println(NTP.getDateStr());
 	display.display();
@@ -393,7 +393,7 @@ void setupCore0(void *param)
 		// error connecting to wifi
 		wifiWorking = false;
 	}
-    NTP.begin(String(FPSTR(ntpServer)), timezoneOffset, timezoneDST, timezoneOffsetMinutes);
+    NTP.begin(ntpServer, timezoneOffset, timezoneDST, timezoneOffsetMinutes);
 	NTP.setInterval(ntpInterval, ntpInterval);
     if (wifiWorking)
 	{
@@ -452,7 +452,7 @@ void loopCore0(void *param)
                     HTTPClient getHttp;
                     WiFiClientSecure client;
                     client.setCACert(firebaseRootCA);
-                    getHttp.begin(client, String(F("https://")) + FPSTR(firebasePath) + FPSTR(schedulePath) + F(".json?auth=") + FPSTR(auth));
+                    getHttp.begin(client, String("https://") + firebasePath + schedulePath + ".json?auth=" + auth);
                     result = getHttp.GET();
                     if (result != HTTP_CODE_OK)
                     {
@@ -567,30 +567,30 @@ void setupOTAUpdate()
 
     if (!connectSTAMode())
     {
-        Serial.println(FPSTR(errorWifiConnect));
-        simpleDisplay(String(FPSTR(errorWifiConnect)));
+        Serial.println(errorWifiConnect);
+        simpleDisplay(errorWifiConnect);
         // if wifi doesn't work, we do nothing
         while (true) { delay(100); }
     }
-    Serial.println(FPSTR(updateWaiting));
-    simpleDisplay(FPSTR(updateWaiting));
+    Serial.println(updateWaiting);
+    simpleDisplay(updateWaiting);
     ArduinoOTA.setHostname(otaHostname);
     ArduinoOTA
         .onStart([]()
         {
-            Serial.println(FPSTR(updateStarted));
-		    simpleDisplay(String(FPSTR(updateStarted)));
+            Serial.println(updateStarted);
+		    simpleDisplay(updateStarted);
         })
         .onEnd([]()
         {
-            Serial.println(FPSTR(updateEnded));
-		    simpleDisplay(String(FPSTR(updateEnded)));
+            Serial.println(updateEnded);
+		    simpleDisplay(updateEnded);
         })
         .onProgress([](unsigned int progress, unsigned int total)
         {
             display.clearDisplay();
-            Serial.printf_P(updateProgress, progress * 100 / total);
-            display.printf_P(updateProgress, progress * 100 / total);
+            Serial.printf(updateProgress, progress * 100 / total);
+            display.printf(updateProgress, progress * 100 / total);
             display.display();
         })
         .onError([](ota_error_t error)
@@ -601,24 +601,24 @@ void setupOTAUpdate()
             switch (error)
             {
                 case OTA_AUTH_ERROR:
-                    Serial.println(FPSTR(updateErrorAuth));
-                    display.println(FPSTR(updateErrorAuth));
+                    Serial.println(updateErrorAuth);
+                    display.println(updateErrorAuth);
                     break;
                 case OTA_BEGIN_ERROR:
-                    Serial.println(FPSTR(updateErrorBegin));
-                    display.println(FPSTR(updateErrorBegin));
+                    Serial.println(updateErrorBegin);
+                    display.println(updateErrorBegin);
                     break;
                 case OTA_CONNECT_ERROR:
-                    Serial.println(FPSTR(updateErrorConnect));
-                    display.println(FPSTR(updateErrorConnect));
+                    Serial.println(updateErrorConnect);
+                    display.println(updateErrorConnect);
                     break;
                 case OTA_RECEIVE_ERROR:
-                    Serial.println(FPSTR(updateErrorReceive));
-                    display.println(FPSTR(updateErrorReceive));
+                    Serial.println(updateErrorReceive);
+                    display.println(updateErrorReceive);
                     break;
                 case OTA_END_ERROR:
-                    Serial.println(FPSTR(updateErrorEnd));
-                    display.println(FPSTR(updateErrorEnd));
+                    Serial.println(updateErrorEnd);
+                    display.println(updateErrorEnd);
                     break;
             }
             display.display();
@@ -637,9 +637,9 @@ void setupWifiDisplayInfo()
 	display.setTextSize(1);
 	display.setTextColor(BLACK);
 	display.setCursor(0, 0);
-	display.println(F("Connect to:"));
+	display.println("Connect to:");
 	display.println(setupWifiAPSSID);
-	display.println(F("With password:"));
+	display.println("With password:");
 	display.println(setupWifiAPPassword);
 	display.display();
 }
@@ -647,7 +647,7 @@ void setupWifiDisplayInfo()
 // function called when a client accesses the root of the server, sends back to the client a webpage with a form
 void setupWifiHandleRoot()
 {
-	server.send(HTTP_CODE_OK, "text/html", String(FPSTR(setupWifiPage)));
+	server.send(HTTP_CODE_OK, "text/html", setupWifiPage);
 }
 
 // function called when a client sends a POST request to the server, at location /post, stores the SSID and password from the request in SPIFFS
@@ -655,11 +655,11 @@ void setupWifiHandlePost()
 {
     if (!server.hasArg("ssid") || !server.hasArg("password"))
 	{
-		server.send(HTTP_CODE_BAD_REQUEST, "text/plain", String(FPSTR(serverNotAllArgsPresent)));
-		Serial.println(FPSTR(serverNotAllArgsPresent));
+		server.send(HTTP_CODE_BAD_REQUEST, "text/plain", serverNotAllArgsPresent);
+		Serial.println(serverNotAllArgsPresent);
 		return;
 	}
-	server.send(HTTP_CODE_OK, "text/plain", String(FPSTR(serverReceivedArgs)));
+	server.send(HTTP_CODE_OK, "text/plain", serverReceivedArgs);
 	String ssid = server.arg("ssid");
 	String password = server.arg("password");
 	Serial.printf("[%s]", ssid.c_str());
@@ -670,7 +670,7 @@ void setupWifiHandlePost()
 	display.clearDisplay();
 	display.setCursor(0, 0);
     display.setTextColor(BLACK);
-	display.println(FPSTR(gotCredentials));
+	display.println(gotCredentials);
 	display.println(ssid);
 	display.println(password);
 	display.display();
@@ -684,8 +684,8 @@ void storeCredentials(const String &ssid, const String &password)
     // we begin SPIFFS with formatOnFail=true, so that, if the initial begin fails, it will format the filesystem and try again
     if (!SPIFFS.begin(true))
 	{
-		Serial.println(FPSTR(errorOpenSPIFFS));
-		simpleDisplay(String(FPSTR(errorOpenSPIFFS)));
+		Serial.println(errorOpenSPIFFS);
+		simpleDisplay(errorOpenSPIFFS);
         // we do nothing, waiting for user intervention
         while (true) { delay(1000); }
 	}
@@ -693,8 +693,8 @@ void storeCredentials(const String &ssid, const String &password)
 	if (!wifiConfigFile)
 	{
         // error opening the file
-		Serial.println(FPSTR(errorOpenConfigWrite));
-		simpleDisplay(String(FPSTR(errorOpenConfigWrite)));
+		Serial.println(errorOpenConfigWrite);
+		simpleDisplay(errorOpenConfigWrite);
         // we do nothing, waiting for user intervention
         while (true) { delay(1000); }
 	}
@@ -711,8 +711,8 @@ void getCredentials(String &ssid, String &password)
     // we begin SPIFFS with formatOnFail=true, so that, if the initial begin fails, it will format the filesystem and try again
 	if (!SPIFFS.begin(true))
 	{
-		Serial.println(FPSTR(errorOpenSPIFFS));
-		simpleDisplay(String(FPSTR(errorOpenSPIFFS)));
+		Serial.println(errorOpenSPIFFS);
+		simpleDisplay(errorOpenSPIFFS);
         ssid = "";
         password = "";
         delay(3000);
@@ -722,8 +722,8 @@ void getCredentials(String &ssid, String &password)
 	if (!wifiConfigFile)
 	{
         // error opening the file
-		Serial.println(FPSTR(errorOpenConfigRead));
-		simpleDisplay(String(FPSTR(errorOpenConfigRead)));
+		Serial.println(errorOpenConfigRead);
+		simpleDisplay(errorOpenConfigRead);
         ssid = "";
         password = "";
         delay(3000);
@@ -1006,7 +1006,7 @@ void temporaryScheduleHelper(int sensor, float temp, int duration, int option, i
 {
 	display.clearDisplay();
 	display.setCursor(4, 0);
-	display.println(FPSTR(temporaryScheduleString));
+	display.println(temporaryScheduleString);
 	display.println();
 
 	if (sel == 0)
@@ -1017,7 +1017,7 @@ void temporaryScheduleHelper(int sensor, float temp, int duration, int option, i
 	{
 		display.setTextColor(BLACK);
 	}
-	display.printf_P(temporaryScheduleSensorString, sensor);
+	display.printf(temporaryScheduleSensorString, sensor);
 	if (sel == 1)
 	{
 		display.setTextColor(WHITE, BLACK);
@@ -1026,7 +1026,7 @@ void temporaryScheduleHelper(int sensor, float temp, int duration, int option, i
 	{
 		display.setTextColor(BLACK);
 	}
-	display.printf_P(temporaryScheduleTempString, temp);
+	display.printf(temporaryScheduleTempString, temp);
 	if (sel == 2)
 	{
 		display.setTextColor(WHITE, BLACK);
@@ -1044,27 +1044,27 @@ void temporaryScheduleHelper(int sensor, float temp, int duration, int option, i
 			ptDuration = (temporaryScheduleEnd - now())/60;
 		if (ptDuration == -1)
 		{
-			display.print(FPSTR(temporaryScheduleDurationInfiniteString));
+			display.print(temporaryScheduleDurationInfiniteString);
 		}
 		else if (ptDuration < 60)
 		{
-			display.printf_P(temporaryScheduleDuration1String, ptDuration);
+			display.printf(temporaryScheduleDuration1String, ptDuration);
 		}
 		else 
 		{
-			display.printf_P(temporaryScheduleDuration2String, ((float)ptDuration) / 60);
+			display.printf(temporaryScheduleDuration2String, ((float)ptDuration) / 60);
 		}
 	}
 	else if (duration < 60)
 	{
-		display.printf_P(temporaryScheduleDuration1String, duration);
+		display.printf(temporaryScheduleDuration1String, duration);
 	}
 	else
 	{
 		if (duration == 24 * 60 + 30)
-			display.print(FPSTR(temporaryScheduleDurationInfiniteString));
+			display.print(temporaryScheduleDurationInfiniteString);
 		else
-			display.printf_P(temporaryScheduleDuration2String, ((float)duration) / 60);
+			display.printf(temporaryScheduleDuration2String, ((float)duration) / 60);
 	}
 	if (sel == 3)
 	{
@@ -1076,7 +1076,7 @@ void temporaryScheduleHelper(int sensor, float temp, int duration, int option, i
 		{
 			display.setTextColor(BLACK);
 		}
-		display.print(FPSTR(temporaryScheduleOkString));
+		display.print(temporaryScheduleOkString);
 		display.setTextColor(BLACK);
 		display.write(' ');
 		if (option == 1)
@@ -1087,7 +1087,7 @@ void temporaryScheduleHelper(int sensor, float temp, int duration, int option, i
 		{
 			display.setTextColor(BLACK);
 		}
-		display.print(FPSTR(temporaryScheduleCancelString));
+		display.print(temporaryScheduleCancelString);
 		display.setTextColor(BLACK);
 		display.write(' ');
 		if (option == 2)
@@ -1098,16 +1098,16 @@ void temporaryScheduleHelper(int sensor, float temp, int duration, int option, i
 		{
 			display.setTextColor(BLACK);
 		}
-		display.println(FPSTR(temporaryScheduleDeleteString));
+		display.println(temporaryScheduleDeleteString);
 	}
 	else
 	{
 		display.setTextColor(BLACK);
-		display.print(FPSTR(temporaryScheduleOkString));
+		display.print(temporaryScheduleOkString);
 		display.write(' ');
-		display.print(FPSTR(temporaryScheduleCancelString));
+		display.print(temporaryScheduleCancelString);
 		display.write(' ');
-		display.println(FPSTR(temporaryScheduleDeleteString));
+		display.println(temporaryScheduleDeleteString);
 	}
 	display.setTextColor(BLACK);
 	display.display();
@@ -1134,32 +1134,32 @@ void displayErrors(int cursorX, int cursorY)
   {
     // error with wifi, no need to check if firebase and ntp work because they don't
     // also no need to display ntp and firebase errors, just wifi error
-    display.print(FPSTR(displayErrorWifiString));
+    display.print(displayErrorWifiString);
     display.write(' ');
   }
   else
   {
     if (!NTPWorking)
       {
-        display.print(FPSTR(displayErrorNTPString));
+        display.print(displayErrorNTPString);
         display.write(' ');
       }
     
     if (!firebaseWorking)
     {
-      display.print(FPSTR(displayErrorFirebaseString));
+      display.print(displayErrorFirebaseString);
       display.write(' ');
     }
   }
   if (!tempWorking)
     {
-      display.print(FPSTR(displayErrorTemperatureString));
+      display.print(displayErrorTemperatureString);
       display.write(' ');
     }
 
   if (!humWorking)
   {
-    display.print(FPSTR(displayErrorHumidityString));
+    display.print(displayErrorHumidityString);
     display.write(' ');
   }
 }
@@ -1172,10 +1172,10 @@ void displayHumidity(int hum, int cursorX, int cursorY)
   display.setTextSize(1);
   if (hum == -1)
   {
-    display.print(FPSTR(displayHumidityNotAvailableString));
+    display.print(displayHumidityNotAvailableString);
     return;
   }
-  display.printf_P(displayHumidityString, hum);
+  display.printf(displayHumidityString, hum);
 }
 
 // cursorX and cursorY are the location of the top left corner
@@ -1193,9 +1193,9 @@ void displayDate(int day, int mth, int year, int wDay, int cursorX, int cursorY)
   display.setCursor(cursorX, cursorY);
   display.setFont();
   display.setTextSize(1);
-  display.printf_P(displayDateLine1String, dayShortStr(wDay), day);
+  display.printf(displayDateLine1String, dayShortStr(wDay), day);
   display.setCursor(cursorX, display.getCursorY());
-  display.printf_P(displayDateLine2String, mth, year);
+  display.printf(displayDateLine2String, mth, year);
 }
 
 // cursorX and cursorY are the location of the middle left point
@@ -1205,7 +1205,7 @@ void displayClock(int hour, int min, int cursorX, int cursorY)
   display.setCursor(cursorX, cursorY);
   display.setFont(&DSEG7Classic_Bold6pt7b);
   display.setTextSize(1);
-  display.printf_P(displayClockFormatString, hour, min);
+  display.printf(displayClockFormatString, hour, min);
 }
 
 // cursorX and cursorY are the location of the top left corner
@@ -1231,11 +1231,11 @@ void displayTemp(float temp, int cursorX, int cursorY)
   int x = display.getCursorX()-1;
   int y = display.getCursorY();
   display.setCursor(x, y-2);
-  display.printf_P(PSTR("%c%c"), DEGREESYMB, displayTempLetter);
+  display.printf("%c%c", DEGREESYMB, displayTempLetter);
   display.setCursor(x, y+7);
   float decimals = temp - floorf(temp);
   decimals *= 10;
-  display.printf_P(PSTR(".%d"), (int)(decimals + 0.5f));
+  display.printf(".%d", (int)(decimals + 0.5f));
 }
 
 void updateTemp()
@@ -1317,56 +1317,56 @@ void manualTimeHelper(int h, int m, int d, int mth, int y, int sel)
 	display.setTextSize(1);
 	display.setTextColor(BLACK);
 	display.setCursor(10, 0);
-	display.println(FPSTR(manualTimeString));
+	display.println(manualTimeString);
 
 	display.setCursor(27, 15);
 	if (sel == 0)
 	{
 		display.setTextColor(WHITE, BLACK);
-		display.printf_P(manualTimeFormatString, h);
+		display.printf(manualTimeFormatString, h);
 		display.setTextColor(BLACK);
 	}
 	else
 	{
 		display.setTextColor(BLACK);
-		display.printf_P(manualTimeFormatString, h);
+		display.printf(manualTimeFormatString, h);
 	}
 	display.print(':');
 	if (sel == 1)
 	{
 		display.setTextColor(WHITE, BLACK);
-		display.printf_P(manualTimeFormatString, m);
+		display.printf(manualTimeFormatString, m);
 		display.setTextColor(BLACK);
 	}
 	else
 	{
 		display.setTextColor(BLACK);
-		display.printf_P(manualTimeFormatString, m);
+		display.printf(manualTimeFormatString, m);
 	}
 
 	display.setCursor(14, 30);
 	if (sel == 2)
 	{
 		display.setTextColor(WHITE, BLACK);
-		display.printf_P(manualTimeFormatString, d);
+		display.printf(manualTimeFormatString, d);
 		display.setTextColor(BLACK);
 	}
 	else
 	{
 		display.setTextColor(BLACK);
-		display.printf_P(manualTimeFormatString, d);
+		display.printf(manualTimeFormatString, d);
 	}
 	display.print('.');
 	if (sel == 3)
 	{
 		display.setTextColor(WHITE, BLACK);
-		display.printf_P(manualTimeFormatString, mth);
+		display.printf(manualTimeFormatString, mth);
 		display.setTextColor(BLACK);
 	}
 	else
 	{
 		display.setTextColor(BLACK);
-		display.printf_P(manualTimeFormatString, mth);
+		display.printf(manualTimeFormatString, mth);
 	}
 	display.print('.');
 	if (sel == 4)
