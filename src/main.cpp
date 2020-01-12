@@ -717,14 +717,21 @@ bool scheduleIsActive(const JsonObject& schedule)
 	// weekly schedule, we check if we are on the same weekday and between the start and end time
 	if (strcmp(repeat, "Weekly") == 0)
 	{
-		int wDay = schedule["weekDay"]; // Sunday is day 1
+        JsonArray wDays = schedule["weekDays"]; // Sunday is day 1
 		int startTime = schedule["sH"].as<int>() * 60 + schedule["sM"].as<int>();
 		int endTime = schedule["eH"].as<int>() * 60 + schedule["eM"].as<int>();
 		time_t t = now();
 		int currWeekDay = weekday(t); // Sunday is day 1
 		int time = hour(t) * 60 + minute(t);
-		Serial.println(wDay == currWeekDay && startTime <= time && time < endTime ? "Active" : "Not active");
-		return wDay == currWeekDay && startTime <= time && time < endTime;
+        for (int wDay : wDays)
+            if (wDay == currWeekDay)
+            {
+                bool active = startTime <= time && time < endTime;
+                Serial.println(active ? "Active" : "Not active");
+                return active;
+            }
+        Serial.println("Not active");
+        return false;
 	}
 	// the schedule doesn't repeat, we check if we are between the start and end time
 	if (strcmp(repeat, "Once") == 0)
