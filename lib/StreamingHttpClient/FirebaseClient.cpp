@@ -1,4 +1,5 @@
 #include "FirebaseClient.h"
+#include "Logger.h"
 
 FirebaseClient::FirebaseClient(const char *_rootCA, const char *_firebaseURL, const char *_secret):
     error(false),
@@ -15,7 +16,7 @@ bool FirebaseClient::consumeStreamIfAvailable()
 {
     if (!streamingHTTPClient.connected())
     {
-        Serial.println("Connection lost");
+        LOG_D("Connection lost");
         closeStream();
         setError(true);
         return false;
@@ -46,6 +47,7 @@ bool FirebaseClient::consumeStreamIfAvailable()
     {
         if (strncmp(eventType + 7, "put", 3) == 0)
         {
+            LOG_T("Received put event");
             return true;
         }
     }
@@ -54,6 +56,7 @@ bool FirebaseClient::consumeStreamIfAvailable()
 
 void FirebaseClient::initializeStream(const char *streamingPath)
 {
+    LOG_T("begin");
     if (streamConnected)
         closeStream();
 
@@ -62,7 +65,6 @@ void FirebaseClient::initializeStream(const char *streamingPath)
     // the esp32 version of httpclient doesn't manage redirects automatically
     //setFollowRedirects(true);
     // we open a secure connection
-    
     streamingHTTPClient.begin(streamingClientSecure, makeURL(streamingPath));
     streamingHTTPClient.addHeader("Accept", "text/event-stream");
 
@@ -70,11 +72,13 @@ void FirebaseClient::initializeStream(const char *streamingPath)
     const char* headers[] = {"Location"};
     streamingHTTPClient.collectHeaders(headers, 1);
 
+    LOG_T("Starting connection for streaming");
     int status = streamingHTTPClient.GET();
 
     //manage redirects manually
     while (status == HTTP_CODE_TEMPORARY_REDIRECT)
     {
+        LOG_T("Redirecting");
         String location = streamingHTTPClient.header("Location");
         streamingHTTPClient.setReuse(false);
         streamingHTTPClient.end();
@@ -85,17 +89,20 @@ void FirebaseClient::initializeStream(const char *streamingPath)
 
     if (status != HTTP_CODE_OK)
     {
+        LOG_D("Connection failed with code %d", status);
         streamConnected = false;
         setError(true);
         return;
     }
 
+    LOG_D("Streaming started");
     streamConnected = true;
     setError(false);
 }
 
 void FirebaseClient::closeStream()
 {
+    LOG_T("begin");
     streamConnected = false;
     streamingHTTPClient.setReuse(false);
     streamingHTTPClient.end();
@@ -127,20 +134,21 @@ void FirebaseClient::setError(bool value)
 
 void FirebaseClient::getJson(const char *path, String &result)
 {
+    LOG_T("begin");
     int resultCode;
     requestHTTPClient.begin(requestClientSecure, makeURL(path));
+    LOG_T("Starting connection to retrieve an object");
     resultCode = requestHTTPClient.GET();
     if (resultCode != HTTP_CODE_OK)
     {
-        Serial.println("error getJson");
-        Serial.println(resultCode);
+        LOG_D("Connection failed with code %d", resultCode);
         requestHTTPClient.end();
         setError(true);
         return;
     }
     // we store the received string, which contains the json representation of the data
     result = requestHTTPClient.getString();
-    Serial.println("success getJson");
+    LOG_D("The object was retrieved successfully");
     requestHTTPClient.end();
     setError(false);
 }

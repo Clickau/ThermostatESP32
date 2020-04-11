@@ -15,6 +15,10 @@
     Serial.print(severity);                       \
     Serial.print('/');
 
+#define INTERNAL_LOG_CORE()                       \
+    Serial.print(xPortGetCoreID());               \
+    Serial.print('/');
+
 #define INTERNAL_LOG_FUNCTION()                   \
     Serial.print(__func__);                       \
     Serial.print(": ");
@@ -29,24 +33,28 @@
 #define INTERNAL_LOG_E(format, ...)               \
     INTERNAL_LOG_TIMESTAMP()                      \
     INTERNAL_LOG_SEVERITY("ERR")                  \
+    INTERNAL_LOG_CORE()                           \
     INTERNAL_LOG_FUNCTION()                       \
     INTERNAL_LOG_MESSAGE(format, ##__VA_ARGS__)
 
 #define INTERNAL_LOG_W(format, ...)               \
     INTERNAL_LOG_TIMESTAMP()                      \
     INTERNAL_LOG_SEVERITY("WRN")                  \
+    INTERNAL_LOG_CORE()                           \
     INTERNAL_LOG_FUNCTION()                       \
     INTERNAL_LOG_MESSAGE(format, ##__VA_ARGS__)
 
 #define INTERNAL_LOG_D(format, ...)               \
     INTERNAL_LOG_TIMESTAMP()                      \
     INTERNAL_LOG_SEVERITY("DBG")                  \
+    INTERNAL_LOG_CORE()                           \
     INTERNAL_LOG_FUNCTION()                       \
     INTERNAL_LOG_MESSAGE(format, ##__VA_ARGS__)
 
 #define INTERNAL_LOG_T(format, ...)               \
     INTERNAL_LOG_TIMESTAMP()                      \
     INTERNAL_LOG_SEVERITY("TRC")                  \
+    INTERNAL_LOG_CORE()                           \
     INTERNAL_LOG_FUNCTION()                       \
     INTERNAL_LOG_MESSAGE(format, ##__VA_ARGS__)
 
