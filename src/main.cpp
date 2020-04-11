@@ -18,6 +18,7 @@
 #include "consts.h"
 #include "webpage.h"
 #include "FirebaseClient.h"
+#include "Logger.h"
 
 enum class Button
 {
