@@ -152,3 +152,41 @@ void FirebaseClient::getJson(const char *path, String &result)
     requestHTTPClient.end();
     setError(false);
 }
+
+void FirebaseClient::setJson(const char *path, const String &data)
+{
+    LOG_T("begin");
+    requestHTTPClient.begin(requestClientSecure, makeURL(path));
+    LOG_T("Starting connection to set an object");
+    requestHTTPClient.addHeader("Content-Type", "application/json");
+    int resultCode = requestHTTPClient.PUT(data);
+    if (resultCode != HTTP_CODE_OK)
+    {
+        LOG_D("Connection failed with code %d", resultCode);
+        requestHTTPClient.end();
+        setError(true);
+        return;
+    }
+    LOG_D("The object was set succesfully");
+    requestHTTPClient.end();
+    setError(false);
+}
+
+void FirebaseClient::pushJson(const char *path, const String &data)
+{
+    LOG_T("begin");
+    requestHTTPClient.begin(requestClientSecure, makeURL(path));
+    LOG_T("Starting connection to push an object");
+    requestHTTPClient.addHeader("Content-Type", "application/json");
+    int resultCode = requestHTTPClient.POST(data);
+    if (resultCode != HTTP_CODE_OK)
+    {
+        LOG_D("Connection failed with code %d", resultCode);
+        requestHTTPClient.end();
+        setError(true);
+        return;
+    }
+    LOG_D("The object was pushed succesfully");
+    requestHTTPClient.end();
+    setError(false);
+}

@@ -46,9 +46,9 @@ public:
      */
     void getJson(const char *path, String &result);
 
-    void setJson(const char *path, const char *json);
+    void setJson(const char *path, const String &data);
 
-    void pushJson(const char *path, const char *json);
+    void pushJson(const char *path, const String &data);
 
 private:
     bool error;
