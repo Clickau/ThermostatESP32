@@ -1,5 +1,5 @@
 #include <Arduino.h>
-#include <DHT_U.h>
+#include <DHTesp.h>
 
 #define DEGREESYMB (char)247
 
@@ -37,7 +37,7 @@ const unsigned long waitingTimeInStartupMenu = 5000; // the time after which the
 const uint8_t pinDC = 21; // DC pin for display
 const uint8_t pinCS = 5; // CS pin for display
 const uint8_t pinRST = 22; // RST pin for display
-const uint8_t displayContrast = 40;
+const uint8_t displayContrast = 50;
 const unsigned long waitingTimeConnectWifi = 10000; // the time we wait for it to connect to the wifi network, in normal operation mode and OTA mode, in milliseconds
 const int ntpInterval = 900; // the time interval after which we update the time, in seconds
 const int timesTryNTP = 3; // how many times we try to download the time from the internet, before we either enter manual mode, if it happens at startup, or we show an NTP error
@@ -51,7 +51,7 @@ const float tempThreshold = 0.5f; // the temperature difference needed between t
 const int timesTryFirebase = 2; // how many times we try to download the schedules from FB, before showing error
 const unsigned long intervalRetryErrors = 300000; // the time interval after which we try to solve the error, for example reconnecting to wifi, reconnecting to Firebase
 const uint8_t dhtPin = 33; // pin for the One Wire communication with DHT module
-const uint8_t dhtType = DHT22; // module type
+const DHTesp::DHT_MODEL_t dhtType = DHTesp::DHT22; // module type
 const unsigned long intervalUpdateTemperature = 10000; // the interval after which we update temperature
 const int maxNumberOfSensors = 7; // de scapat de senzori externi deocamdata
 const char temporaryScheduleString[] = "Program Temp.";

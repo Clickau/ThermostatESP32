@@ -5,9 +5,7 @@
 #include <WiFiClient.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_PCD8544.h>
-#include <Adafruit_Sensor.h>
-#include <DHT.h>
-#include <DHT_U.h>
+#include <DHTesp.h>
 #include <TimeLib.h>
 #include <NtpClientLib.h>
 #include <WebServer.h>
@@ -48,12 +46,8 @@ bool buttonBeingHeld = false;
 Adafruit_PCD8544 display = Adafruit_PCD8544(pinDC, pinCS, pinRST);
 FirebaseClient firebaseClient{firebaseRootCA, firebasePath, auth};
 WebServer server(80);
-DHT_Unified dht(dhtPin, dhtType);
-// did this so you can easily change the type of sensor used (if it supports the Unified Sensor library), not sure if it's the best way though
-DHT_Unified::Temperature tSens = dht.temperature();
-DHT_Unified::Humidity hSens = dht.humidity();
-Adafruit_Sensor *tempSensor = &tSens;
-Adafruit_Sensor *humSensor = &hSens;
+DHTesp dht;
+
 
 TaskHandle_t setupCore0Handle;
 TaskHandle_t loopCore0Handle;
@@ -314,7 +308,7 @@ void setupCore0(void *param)
     LOG_T("begin");
     bool *p = static_cast<bool*>(param);
     LOG_T("Starting DHT sensor");
-    dht.begin();
+    dht.setup(dhtPin, dhtType);
     LOG_T("Started DHT sensor");
     if (!connectSTAMode())
 	{
@@ -1246,9 +1240,7 @@ void displayTemp(float temp, int cursorX, int cursorY)
 void updateTemp()
 {
     LOG_T("begin");
-	sensors_event_t event;
-	tempSensor->getEvent(&event);
-	float _temperature = event.temperature;
+	float _temperature = dht.getTemperature();
 	tempWorking = !isnan(_temperature);
 	temperature = _temperature;
     LOG_D("Temperature: %f", temperature);
@@ -1257,9 +1249,7 @@ void updateTemp()
 void updateHum()
 {
     LOG_T("begin");
-	sensors_event_t event;
-	humSensor->getEvent(&event);
-	float _humidity = event.relative_humidity;
+	float _humidity = dht.getHumidity();
 	humWorking = !isnan(_humidity);
 	if (isnan(_humidity))
 		humidity = -1;
