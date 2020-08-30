@@ -45,6 +45,7 @@ DHTesp dht;
 TaskHandle_t setupTaskHandle;
 TaskHandle_t serverTaskHandle;
 TaskHandle_t updateTaskHandle;
+TaskHandle_t firebaseTaskHandle;
 
 // Tasks
 void normalOperationTask(void *);
@@ -52,6 +53,7 @@ void setupWifiTask(void *);
 void otaUpdateTask(void *);
 void serverLoopTask(void *);
 void updateLoopTask(void *);
+void firebaseLoopTask(void *);
 
 // General purpose
 void sendSignalToHeater(bool signal);
@@ -258,7 +260,7 @@ void normalOperationTask(void *)
 
         simpleDisplay(waitingForFirebaseString);
         LOG_D("Initializing Firebase stream");
-		firebaseClient.initializeStream("/Schedule");
+		firebaseClient.initializeStream("/Schedules");
     }
     else
 	{
@@ -284,6 +286,51 @@ void normalOperationTask(void *)
 	display.printf(gotTimeHourFormatString, tmnow.tm_hour, tmnow.tm_min);
 	display.printf(gotTimeDateFormatString, tmnow.tm_mday, tmnow.tm_mon + 1, tmnow.tm_year + 1900);
 	display.display();
+
+    xTaskCreatePinnedToCore(
+        firebaseLoopTask,
+        "firebaseLoopTask",
+        5120,
+        nullptr,
+        1,
+        &firebaseTaskHandle,
+        0
+    );
+
+    vTaskDelete(nullptr);
+}
+
+void firebaseLoopTask(void *)
+{
+    LOG_T("begin");
+    while (true)
+    {
+        vTaskDelay(50);
+        if (firebaseClient.getError())
+            continue;
+        if (firebaseClient.consumeStreamIfAvailable())
+        {
+            // something in the database changed, we download the whole database
+            // we try it for timesTryFirebase times, before we give up
+            LOG_D("New change in Firebase stream");
+            LOG_D("Trying to get new data");
+            for (int i = 1; i <= timesTryFirebase; i++)
+            {
+                LOG_D("Attempt %d/%d", i, timesTryFirebase);
+                firebaseClient.getJson("/Schedules", scheduleString);
+                if (!firebaseClient.getError())
+                    break;
+            }
+            if (!firebaseClient.getError())
+            {
+                LOG_D("Got new schedules");
+            }
+            else
+            {
+                LOG_D("Failed to get new schedules");
+            }
+        }
+    }
 
     vTaskDelete(nullptr);
 }
