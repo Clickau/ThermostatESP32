@@ -5,6 +5,7 @@
 #include <WebServer.h>
 #include <SPIFFS.h>
 #include <ArduinoOTA.h>
+#include <lwip/apps/sntp.h>
 
 #include "string_consts.h"
 #include "settings.h"
@@ -49,8 +50,8 @@ TaskHandle_t updateTaskHandle;
 void normalOperationTask(void *);
 void setupWifiTask(void *);
 void otaUpdateTask(void *);
-void serverTask(void *);
-void updateTask(void *);
+void serverLoopTask(void *);
+void updateLoopTask(void *);
 
 // General purpose
 void sendSignalToHeater(bool signal);
@@ -60,6 +61,8 @@ Button buttonPressed();
 void simpleDisplay(const char *str);
 bool connectSTAMode();
 void getCredentials(String &ssid, String &password);
+void manualTimeSetup();
+void manualTimeHelper(int h, int m, int d, int mth, int y, int sel);
 
 // Setup Wifi helpers
 void setupWifiDisplayInfo();
@@ -146,14 +149,13 @@ void showStartupMenu()
     switch (currentHighlightedValue)
     {
     case 0:
-        xTaskCreatePinnedToCore(
+        xTaskCreate(
             normalOperationTask,
             "normalOperationTask",
             8192,
             nullptr,
             1,
-            &setupTaskHandle,
-            0
+            &setupTaskHandle
         );
         break;
     case 1:
@@ -216,7 +218,218 @@ void startupMenuHelper(int highlightedOption)
 void normalOperationTask(void *)
 {
     LOG_T("begin");
+    LOG_T("Starting DHT sensor");
+    dht.setup(pinDHT, dhtType);
+    LOG_D("Started DHT sensor");
+    simpleDisplay(waitingForWifiString);
+    if (!connectSTAMode())
+	{
+        LOG_D("Error connecting to Wifi");
+        simpleDisplay(errorWifiConnectString);
+		wifiWorking = false;
+	}
+    LOG_T("Starting NTP");
+    configTzTime(timezoneString, ntpServer0, ntpServer1, ntpServer2);
+    LOG_D("Started NTP");
+    if (wifiWorking)
+    {
+        LOG_D("Trying to get NTP time");
+        simpleDisplay(waitingForNTPString);
+        uint32_t startMillis = millis();
+        while ((sntp_getreachability(0) | sntp_getreachability(1) | sntp_getreachability(2)) == 0 && millis() - startMillis < waitingTimeNTP)
+        {
+            delay(100);
+        }
+        if ((sntp_getreachability(0) | sntp_getreachability(1) | sntp_getreachability(2)) == 0)
+        {
+            LOG_D("Couldn't get NTP time");
+			NTPWorking = false;
+            LOG_D("Entering Manual Time Setup");
+            simpleDisplay(errorNTPString);
+            delay(3000);
+            manualTimeSetup();
+        }
+        else
+        {
+            time_t now;
+            time(&now);
+            LOG_D("Got NTP time: %ld", now);
+        }
+
+        simpleDisplay(waitingForFirebaseString);
+        LOG_D("Initializing Firebase stream");
+		firebaseClient.initializeStream("/Schedule");
+    }
+    else
+	{
+        LOG_D("Bypassed getting NTP time");
+		NTPWorking = false;
+        LOG_D("Bypassed initializing Firebase stream");
+		firebaseClient.setError(true);
+        LOG_D("Entering Manual Time Setup");
+        delay(3000);
+        manualTimeSetup();
+	}
+
+    // we are sure we have the current time (either via ntp or manual time)
+    time_t now;
+    tm tmnow;
+    time(&now);
+    localtime_r(&now, &tmnow);
+    LOG_D("Got Time: %s", ctime(&now));
+
+	display.clearDisplay();
+	display.setCursor(0, 0);
+	display.println(gotTimeString);
+	display.printf(gotTimeHourFormatString, tmnow.tm_hour, tmnow.tm_min);
+	display.printf(gotTimeDateFormatString, tmnow.tm_mday, tmnow.tm_mon + 1, tmnow.tm_year + 1900);
+	display.display();
+
     vTaskDelete(nullptr);
+}
+
+// prompts the user to enter the current date and time
+void manualTimeSetup()
+{
+    LOG_T("begin");
+	int manualTime[] = {0, 0, 1, 1, 2020}; // int h=0, m=0, d=1, mth=1, y=2020;
+	const int maxValue[] = {23, 59, 31, 12, 2100};
+	const int minValue[] = {0, 0, 1, 1, 2020};
+	int sel = 0;
+	manualTimeHelper(manualTime[0], manualTime[1], manualTime[2], manualTime[3], manualTime[4], sel);
+    LOG_T( "hour=%d\n"\
+           "minute=%d\n"\
+           "day=%d\n"\
+           "month=%d\n"\
+           "year=%d\n"\
+           "Selected=%d",
+           manualTime[0], manualTime[1], manualTime[2], manualTime[3], manualTime[4], sel );
+    uint32_t count = 0;
+	while (sel < 5)
+	{
+		Button lastPressed = buttonPressed();
+		switch (lastPressed)
+		{
+		case Button::Up:
+			if (manualTime[sel] < maxValue[sel])
+				manualTime[sel]++;
+			else
+				manualTime[sel] = minValue[sel];
+            LOG_T("Value=%d", manualTime[sel]);
+			break;
+		case Button::Down:
+			if (manualTime[sel] > minValue[sel])
+				manualTime[sel]--;
+			else
+				manualTime[sel] = maxValue[sel];
+            LOG_T("Value=%d", manualTime[sel]);
+			break;
+		case Button::Enter:
+			sel++;
+            LOG_T("Selected=%d", sel);
+			break;
+		default:
+			break;
+		}
+		manualTimeHelper(manualTime[0], manualTime[1], manualTime[2], manualTime[3], manualTime[4], sel);
+        if (++count > 100)
+        {
+            vTaskDelay(5);
+            count = 0;
+        }
+	}
+
+    LOG_T( "hour=%d\n"\
+        "minute=%d\n"\
+        "day=%d\n"\
+        "month=%d\n"\
+        "year=%d",
+        manualTime[0], manualTime[1], manualTime[2], manualTime[3], manualTime[4] );
+    tm newTm;
+    newTm.tm_sec = 0;
+    newTm.tm_hour = manualTime[0];
+    newTm.tm_min = manualTime[1];
+    newTm.tm_mday = manualTime[2];
+    newTm.tm_mon = manualTime[3] - 1;
+    newTm.tm_year = manualTime[4] - 1900;
+    newTm.tm_isdst = -1; // let mktime decide if the DST is active at the respective time
+    time_t newTime = mktime(&newTm);
+    timeval newTv = { newTime, 0 };
+    settimeofday(&newTv, nullptr);
+}
+
+// helper function that displays the current selected date and time in manual time mode
+void manualTimeHelper(int h, int m, int d, int mth, int y, int sel)
+{
+	display.clearDisplay();
+	display.setTextSize(1);
+	display.setTextColor(BLACK);
+	display.setCursor(10, 0);
+	display.println(manualTimeTitleString);
+
+	display.setCursor(27, 15);
+	if (sel == 0)
+	{
+		display.setTextColor(WHITE, BLACK);
+		display.printf(manualTimeFormatString, h);
+		display.setTextColor(BLACK);
+	}
+	else
+	{
+		display.setTextColor(BLACK);
+		display.printf(manualTimeFormatString, h);
+	}
+	display.print(':');
+	if (sel == 1)
+	{
+		display.setTextColor(WHITE, BLACK);
+		display.printf(manualTimeFormatString, m);
+		display.setTextColor(BLACK);
+	}
+	else
+	{
+		display.setTextColor(BLACK);
+		display.printf(manualTimeFormatString, m);
+	}
+
+	display.setCursor(14, 30);
+	if (sel == 2)
+	{
+		display.setTextColor(WHITE, BLACK);
+		display.printf(manualTimeFormatString, d);
+		display.setTextColor(BLACK);
+	}
+	else
+	{
+		display.setTextColor(BLACK);
+		display.printf(manualTimeFormatString, d);
+	}
+	display.print('.');
+	if (sel == 3)
+	{
+		display.setTextColor(WHITE, BLACK);
+		display.printf(manualTimeFormatString, mth);
+		display.setTextColor(BLACK);
+	}
+	else
+	{
+		display.setTextColor(BLACK);
+		display.printf(manualTimeFormatString, mth);
+	}
+	display.print('.');
+	if (sel == 4)
+	{
+		display.setTextColor(WHITE, BLACK);
+		display.println(y);
+		display.setTextColor(BLACK);
+	}
+	else
+	{
+		display.setTextColor(BLACK);
+		display.println(y);
+	}
+
+	display.display();
 }
 
 void setupWifiTask(void *)
@@ -238,8 +451,8 @@ void setupWifiTask(void *)
     LOG_D("Started server");
 
     xTaskCreate(
-        serverTask,
-        "serverTask",
+        serverLoopTask,
+        "serverLoopTask",
         3072,
         nullptr,
         1,
@@ -249,7 +462,7 @@ void setupWifiTask(void *)
     vTaskDelete(nullptr);
 }
 
-void serverTask(void *)
+void serverLoopTask(void *)
 {
     LOG_T("begin");
     while (true)
@@ -344,6 +557,7 @@ void storeCredentials(const String &ssid, const String &password)
 void otaUpdateTask(void *)
 {
     LOG_T("begin");
+    simpleDisplay(waitingForWifiString);
     if (!connectSTAMode())
     {
         LOG_E("Error connecting to Wifi");
@@ -408,8 +622,8 @@ void otaUpdateTask(void *)
     LOG_D("Started OTA Update client");
 
     xTaskCreate(
-        updateTask,
-        "updateTask",
+        updateLoopTask,
+        "updateLoopTask",
         3072,
         nullptr,
         1,
@@ -419,7 +633,7 @@ void otaUpdateTask(void *)
     vTaskDelete(nullptr);
 }
 
-void updateTask(void *)
+void updateLoopTask(void *)
 {
     LOG_T("begin");
     while (true)
