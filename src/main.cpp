@@ -13,6 +13,8 @@
 #include "webpage.h"
 #include "FirebaseClient.h"
 #include "Logger.h"
+#include "DSEG7Classic-Bold6pt.h"
+#include "flame.h"
 
 enum class Button
 {
@@ -25,7 +27,7 @@ enum class Button
 bool heaterState = false;
 String scheduleString;
 bool wifiWorking = true;
-bool NTPWorking = true;
+bool ntpWorking = true;
 bool tempWorking = true;
 bool humWorking = true;
 float temperature = NAN;
@@ -46,6 +48,7 @@ TaskHandle_t setupTaskHandle;
 TaskHandle_t serverTaskHandle;
 TaskHandle_t updateTaskHandle;
 TaskHandle_t firebaseTaskHandle;
+TaskHandle_t uiTaskHandle;
 
 // Tasks
 void normalOperationTask(void *);
@@ -54,15 +57,20 @@ void otaUpdateTask(void *);
 void serverLoopTask(void *);
 void updateLoopTask(void *);
 void firebaseLoopTask(void *);
+void uiLoopTask(void *);
 
 // General purpose
 void sendSignalToHeater(bool signal);
-void showStartupMenu();
-void startupMenuHelper(int highlightedOption);
 Button buttonPressed();
 void simpleDisplay(const char *str);
 bool connectSTAMode();
 void getCredentials(String &ssid, String &password);
+
+// Startup Menu
+void showStartupMenu();
+void startupMenuHelper(int highlightedOption);
+
+// Manual Time
 void manualTimeSetup();
 void manualTimeHelper(int h, int m, int d, int mth, int y, int sel);
 
@@ -71,6 +79,19 @@ void setupWifiDisplayInfo();
 void setupWifiHandleRoot();
 void setupWifiHandlePost();
 void storeCredentials(const String &ssid, const String &password);
+
+// Display helpers
+void updateDisplay();
+void displayDate(int day, int mth, int year, int wDay, int cursorX, int cursorY);
+void displayClock(int hour, int min, int cursorX, int cursorY);
+void displayTemp(float temp, int cursorX, int cursorY);
+void displayHumidity(int hum, int cursorX, int cursorY);
+void displayFlame(const uint8_t *flameBitmap, int cursorX, int cursorY, int width, int height);
+void displayErrors(int cursorX, int cursorY);
+
+// Temporary Schedule
+void temporaryScheduleSetup();
+void temporaryScheduleHelper(float temp, int duration, int option, int sel);
 
 extern "C" void app_main()
 {
@@ -89,7 +110,6 @@ extern "C" void app_main()
     // menu where the user selects which operation mode should be used
     showStartupMenu();
 }
-
 
 void showStartupMenu()
 {
@@ -157,8 +177,7 @@ void showStartupMenu()
             8192,
             nullptr,
             1,
-            &setupTaskHandle
-        );
+            &setupTaskHandle);
         break;
     case 1:
         xTaskCreate(
@@ -167,8 +186,7 @@ void showStartupMenu()
             3072,
             nullptr,
             1,
-            &setupTaskHandle
-        );
+            &setupTaskHandle);
         break;
     case 2:
         xTaskCreate(
@@ -177,8 +195,7 @@ void showStartupMenu()
             5120,
             nullptr,
             1,
-            &setupTaskHandle
-        );
+            &setupTaskHandle);
         break;
     }
 }
@@ -204,7 +221,7 @@ void startupMenuHelper(int highlightedOption)
         display.setTextColor(BLACK);
 
     display.println(menuSetupWifiString);
-    
+
     if (highlightedOption == 2)
         display.setTextColor(WHITE, BLACK);
     else
@@ -225,11 +242,11 @@ void normalOperationTask(void *)
     LOG_D("Started DHT sensor");
     simpleDisplay(waitingForWifiString);
     if (!connectSTAMode())
-	{
+    {
         LOG_D("Error connecting to Wifi");
         simpleDisplay(errorWifiConnectString);
-		wifiWorking = false;
-	}
+        wifiWorking = false;
+    }
     LOG_T("Starting NTP");
     configTzTime(timezoneString, ntpServer0, ntpServer1, ntpServer2);
     LOG_D("Started NTP");
@@ -245,7 +262,7 @@ void normalOperationTask(void *)
         if ((sntp_getreachability(0) | sntp_getreachability(1) | sntp_getreachability(2)) == 0)
         {
             LOG_D("Couldn't get NTP time");
-			NTPWorking = false;
+            ntpWorking = false;
             LOG_D("Entering Manual Time Setup");
             simpleDisplay(errorNTPString);
             delay(3000);
@@ -260,18 +277,18 @@ void normalOperationTask(void *)
 
         simpleDisplay(waitingForFirebaseString);
         LOG_D("Initializing Firebase stream");
-		firebaseClient.initializeStream("/Schedules");
+        firebaseClient.initializeStream("/Schedules");
     }
     else
-	{
+    {
         LOG_D("Bypassed getting NTP time");
-		NTPWorking = false;
+        ntpWorking = false;
         LOG_D("Bypassed initializing Firebase stream");
-		firebaseClient.setError(true);
+        firebaseClient.setError(true);
         LOG_D("Entering Manual Time Setup");
         delay(3000);
         manualTimeSetup();
-	}
+    }
 
     // we are sure we have the current time (either via ntp or manual time)
     time_t now;
@@ -280,12 +297,12 @@ void normalOperationTask(void *)
     localtime_r(&now, &tmnow);
     LOG_D("Got Time: %s", ctime(&now));
 
-	display.clearDisplay();
-	display.setCursor(0, 0);
-	display.println(gotTimeString);
-	display.printf(gotTimeHourFormatString, tmnow.tm_hour, tmnow.tm_min);
-	display.printf(gotTimeDateFormatString, tmnow.tm_mday, tmnow.tm_mon + 1, tmnow.tm_year + 1900);
-	display.display();
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.println(gotTimeString);
+    display.printf(gotTimeHourFormatString, tmnow.tm_hour, tmnow.tm_min);
+    display.printf(gotTimeDateFormatString, tmnow.tm_mday, tmnow.tm_mon + 1, tmnow.tm_year + 1900);
+    display.display();
 
     xTaskCreatePinnedToCore(
         firebaseLoopTask,
@@ -294,10 +311,418 @@ void normalOperationTask(void *)
         nullptr,
         1,
         &firebaseTaskHandle,
-        0
-    );
+        0);
+
+    xTaskCreatePinnedToCore(
+        uiLoopTask,
+        "uiLoopTask",
+        2048,
+        nullptr,
+        1,
+        &uiTaskHandle,
+        1);
 
     vTaskDelete(nullptr);
+}
+
+void uiLoopTask(void *)
+{
+    while (true)
+    {
+        ntpWorking = (sntp_getreachability(0) | sntp_getreachability(1) | sntp_getreachability(2)) != 0;
+        wifiWorking = WiFi.isConnected();
+        updateDisplay();
+        if (buttonPressed() == Button::Enter)
+        {
+            temporaryScheduleSetup();
+        }
+        vTaskDelay(10);
+    }
+
+    vTaskDelete(nullptr);
+}
+
+void temporaryScheduleSetup()
+{
+    LOG_T("begin");
+    LOG_D("Entering Temporary Schedule Setup");
+    float temp = 20.0f;
+    // the duration is in minutes, -1 means it will use the same end time as the previous schedule, 24 * 60 + 30 means infinite duration
+    int duration = 30;
+    int option = 0;
+    int sel = 0;
+    if (temporaryScheduleActive)
+    {
+        LOG_T("Modifying current temporary schedule");
+        temp = temporaryScheduleTemp;
+        // the new temporary schedule will end at the same time as the old one
+        duration = -1;
+    }
+    unsigned long previousTime = millis();
+    bool autoselect = true;
+    LOG_T("temp=%f\n"
+          "duration=%d\n"
+          "option=%d\n"
+          "sel=%d",
+          temp, duration, option, sel);
+    temporaryScheduleHelper(temp, duration, option, sel);
+    uint32_t count = 0;
+    while (sel < 3)
+    {
+        Button pressed = buttonPressed();
+        if (pressed == Button::None)
+        {
+            if (autoselect && millis() - previousTime > waitingTimeInTemporaryScheduleMenu)
+            {
+                LOG_D("Exiting menu because nothing was pressed");
+                break;
+            }
+        }
+        if (pressed == Button::Enter)
+        {
+            sel++;
+            autoselect = false;
+        }
+        else if (pressed == Button::Up)
+        {
+            autoselect = false;
+            switch (sel)
+            {
+            case 0:
+                if (temp < 35.0f)
+                    temp += temporaryScheduleTempResolution;
+                else
+                    temp = 5.0f;
+                LOG_T("temp=%f", temp);
+                break;
+            case 1:
+                if (duration == -1)
+                    duration = 15;
+                else if (duration <= 24 * 60)
+                {
+                    if (duration < 60)
+                        duration += 15;
+                    else
+                        duration += 30;
+                }
+                else
+                    duration = 15;
+                LOG_T("duration=%d", duration);
+                break;
+            case 2:
+                if (option < 2)
+                    option++;
+                else
+                    option = 0;
+                LOG_T("option=%d", option);
+                break;
+            }
+        }
+        else if (pressed == Button::Down)
+        {
+            autoselect = false;
+            switch (sel)
+            {
+            case 0:
+                if (temp > 5.0f)
+                    temp -= temporaryScheduleTempResolution;
+                else
+                    temp = 35.0f;
+                LOG_T("temp=%f", temp);
+                break;
+            case 1:
+                if (duration == -1)
+                    duration = 15;
+                else if (duration > 15)
+                {
+                    if (duration <= 60)
+                        duration -= 15;
+                    else
+                        duration -= 30;
+                }
+                else
+                    duration = 24 * 60 + 30;
+                LOG_T("duration=%d", duration);
+                break;
+            case 2:
+                if (option > 0)
+                    option--;
+                else
+                    option = 2;
+                LOG_T("option=%d", option);
+            default:
+                break;
+            }
+        }
+        temporaryScheduleHelper(temp, duration, option, sel);
+
+        if (++count > 100)
+        {
+            vTaskDelay(10);
+            count = 0;
+        }
+    }
+    if (option == 1 || autoselect)
+    {
+        LOG_D("Return without changing anything");
+        return;
+    }
+    if (option == 0)
+    {
+        temporaryScheduleActive = true;
+        temporaryScheduleTemp = temp;
+        if (duration != -1)
+        {
+            if (duration == 24 * 60 + 30)
+                temporaryScheduleEnd = -1;
+            else
+            {
+                time_t now;
+                time(&now);
+                temporaryScheduleEnd = now + duration * 60;
+            }
+        }
+        LOG_D("Saved temporary schedule");
+    }
+    else if (option == 2)
+    {
+        temporaryScheduleActive = false;
+        LOG_D("Deleted temporary schedule");
+    }
+}
+
+// helper function that displays the selected values on the screen
+void temporaryScheduleHelper(float temp, int duration, int option, int sel)
+{
+    display.clearDisplay();
+    display.println(temporaryScheduleTitleString);
+    display.println();
+
+    if (sel == 0)
+    {
+        display.setTextColor(WHITE, BLACK);
+    }
+    else
+    {
+        display.setTextColor(BLACK);
+    }
+    display.printf(temporaryScheduleTempFormatString, temp);
+    if (sel == 1)
+    {
+        display.setTextColor(WHITE, BLACK);
+    }
+    else
+    {
+        display.setTextColor(BLACK);
+    }
+    if (duration == -1)
+    {
+        int ptDuration;
+        if (temporaryScheduleEnd == -1)
+            ptDuration = -1;
+        else
+        {
+            time_t now;
+            time(&now);
+            ptDuration = (temporaryScheduleEnd - now) / 60;
+        }
+        if (ptDuration == -1)
+        {
+            display.print(temporaryScheduleDurationInfiniteString);
+        }
+        else if (ptDuration < 60)
+        {
+            display.printf(temporaryScheduleDuration1FormatString, ptDuration);
+        }
+        else
+        {
+            display.printf(temporaryScheduleDuration2FormatString, ((float)ptDuration) / 60);
+        }
+    }
+    else if (duration < 60)
+    {
+        display.printf(temporaryScheduleDuration1FormatString, duration);
+    }
+    else
+    {
+        if (duration == 24 * 60 + 30)
+            display.print(temporaryScheduleDurationInfiniteString);
+        else
+            display.printf(temporaryScheduleDuration2FormatString, ((float)duration) / 60);
+    }
+    if (sel == 2)
+    {
+        if (option == 0)
+        {
+            display.setTextColor(WHITE, BLACK);
+        }
+        else
+        {
+            display.setTextColor(BLACK);
+        }
+        display.print(temporaryScheduleOkString);
+        display.setTextColor(BLACK);
+        display.write(' ');
+        if (option == 1)
+        {
+            display.setTextColor(WHITE, BLACK);
+        }
+        else
+        {
+            display.setTextColor(BLACK);
+        }
+        display.print(temporaryScheduleCancelString);
+        display.setTextColor(BLACK);
+        display.write(' ');
+        if (option == 2)
+        {
+            display.setTextColor(WHITE, BLACK);
+        }
+        else
+        {
+            display.setTextColor(BLACK);
+        }
+        display.println(temporaryScheduleDeleteString);
+    }
+    else
+    {
+        display.setTextColor(BLACK);
+        display.print(temporaryScheduleOkString);
+        display.write(' ');
+        display.print(temporaryScheduleCancelString);
+        display.write(' ');
+        display.println(temporaryScheduleDeleteString);
+    }
+    display.setTextColor(BLACK);
+    display.display();
+}
+
+void updateDisplay()
+{
+    display.clearDisplay();
+    time_t now;
+    tm tmnow;
+    time(&now);
+    localtime_r(&now, &tmnow);
+    displayDate(tmnow.tm_mday, tmnow.tm_mon + 1, tmnow.tm_year + 1900, tmnow.tm_wday, 3, 32);
+    displayClock(tmnow.tm_hour, tmnow.tm_min, 42, 20);
+    displayTemp(temperature, 48, 32);
+    displayHumidity(humidity, 3, 18);
+    displayFlame(flame, 75, 0, 8, 12); // the last two arguments are the width and the height of the flame icon
+    displayErrors(0, 0);
+    display.display();
+}
+
+// cursorX and cursorY are the location of the top left corner
+void displayErrors(int cursorX, int cursorY)
+{
+    display.setCursor(cursorX, cursorY);
+    if (!wifiWorking)
+    {
+        // error with wifi, no need to check if firebase and ntp work because they don't
+        // also no need to display ntp and firebase errors, just wifi error
+        display.print(displayErrorWifiString);
+        display.write(' ');
+    }
+    else
+    {
+        if (!ntpWorking)
+        {
+            display.print(displayErrorNTPString);
+            display.write(' ');
+        }
+
+        if (firebaseClient.getError())
+        {
+            display.print(displayErrorFirebaseString);
+            display.write(' ');
+        }
+    }
+    if (!tempWorking)
+    {
+        display.print(displayErrorTemperatureString);
+        display.write(' ');
+    }
+
+    if (!humWorking)
+    {
+        display.print(displayErrorHumidityString);
+        display.write(' ');
+    }
+}
+
+// cursorX and cursorY are the location of the top left corner
+void displayHumidity(int hum, int cursorX, int cursorY)
+{
+    display.setCursor(cursorX, cursorY);
+    display.setFont();
+    display.setTextSize(1);
+    if (hum == -1)
+    {
+        display.print(displayHumidityNotAvailableString);
+        return;
+    }
+    display.printf(displayHumidityFormatString, hum);
+}
+
+// cursorX and cursorY are the location of the top left corner
+// only displays the flame if the heater is on
+void displayFlame(const uint8_t *flameBitmap, int cursorX, int cursorY, int width, int height)
+{
+    if (heaterState)
+        display.drawBitmap(cursorX, cursorY, flameBitmap, width, height, BLACK);
+}
+
+// cursorX and cursorY are the location of the top left corner
+// sunday is wDay 0
+void displayDate(int day, int mth, int year, int wDay, int cursorX, int cursorY)
+{
+    display.setCursor(cursorX, cursorY);
+    display.setFont();
+    display.setTextSize(1);
+    display.printf(displayDateLine1FormatString, displayShortWeekdayStrings[wDay], day);
+    display.setCursor(cursorX, display.getCursorY());
+    display.printf(displayDateLine2FormatString, mth, year);
+}
+
+// cursorX and cursorY are the location of the middle left point
+// it uses the DSEG7 Classic Bold font
+void displayClock(int hour, int min, int cursorX, int cursorY)
+{
+    display.setCursor(cursorX, cursorY);
+    display.setFont(&DSEG7Classic_Bold6pt7b);
+    display.setTextSize(1);
+    display.printf(displayClockFormatString, hour, min);
+}
+
+// cursorX and cursorY are the location of the top left corner
+// needs at least 2 free pixels above(for the degree symbol and C)
+void displayTemp(float temp, int cursorX, int cursorY)
+{
+    display.setFont();
+    if (isnan(temp))
+    {
+        display.setCursor(cursorX, cursorY);
+        display.setTextSize(2);
+        display.write('N');
+        display.setTextSize(1, 2);
+        display.write('/');
+        display.setTextSize(2);
+        display.write('A');
+        return;
+    }
+    display.setCursor(cursorX, cursorY);
+    display.setTextSize(2);
+    display.print((int)temp);
+    display.setTextSize(1);
+    int x = display.getCursorX() - 1;
+    int y = display.getCursorY();
+    display.setCursor(x, y - 2);
+    display.printf("%c%c", char(247), displayTempLetter); // char(247) is the degree symbol °
+    display.setCursor(x, y + 7);
+    float decimals = temp - floorf(temp);
+    decimals *= 10;
+    display.printf(".%d", (int)(decimals + 0.5f));
 }
 
 void firebaseLoopTask(void *)
@@ -339,59 +764,59 @@ void firebaseLoopTask(void *)
 void manualTimeSetup()
 {
     LOG_T("begin");
-	int manualTime[] = {0, 0, 1, 1, 2020}; // int h=0, m=0, d=1, mth=1, y=2020;
-	const int maxValue[] = {23, 59, 31, 12, 2100};
-	const int minValue[] = {0, 0, 1, 1, 2020};
-	int sel = 0;
-	manualTimeHelper(manualTime[0], manualTime[1], manualTime[2], manualTime[3], manualTime[4], sel);
-    LOG_T( "hour=%d\n"\
-           "minute=%d\n"\
-           "day=%d\n"\
-           "month=%d\n"\
-           "year=%d\n"\
-           "Selected=%d",
-           manualTime[0], manualTime[1], manualTime[2], manualTime[3], manualTime[4], sel );
+    int manualTime[] = {0, 0, 1, 1, 2020}; // int h=0, m=0, d=1, mth=1, y=2020;
+    const int maxValue[] = {23, 59, 31, 12, 2100};
+    const int minValue[] = {0, 0, 1, 1, 2020};
+    int sel = 0;
+    manualTimeHelper(manualTime[0], manualTime[1], manualTime[2], manualTime[3], manualTime[4], sel);
+    LOG_T("hour=%d\n"
+          "minute=%d\n"
+          "day=%d\n"
+          "month=%d\n"
+          "year=%d\n"
+          "Selected=%d",
+          manualTime[0], manualTime[1], manualTime[2], manualTime[3], manualTime[4], sel);
     uint32_t count = 0;
-	while (sel < 5)
-	{
-		Button lastPressed = buttonPressed();
-		switch (lastPressed)
-		{
-		case Button::Up:
-			if (manualTime[sel] < maxValue[sel])
-				manualTime[sel]++;
-			else
-				manualTime[sel] = minValue[sel];
+    while (sel < 5)
+    {
+        Button lastPressed = buttonPressed();
+        switch (lastPressed)
+        {
+        case Button::Up:
+            if (manualTime[sel] < maxValue[sel])
+                manualTime[sel]++;
+            else
+                manualTime[sel] = minValue[sel];
             LOG_T("Value=%d", manualTime[sel]);
-			break;
-		case Button::Down:
-			if (manualTime[sel] > minValue[sel])
-				manualTime[sel]--;
-			else
-				manualTime[sel] = maxValue[sel];
+            break;
+        case Button::Down:
+            if (manualTime[sel] > minValue[sel])
+                manualTime[sel]--;
+            else
+                manualTime[sel] = maxValue[sel];
             LOG_T("Value=%d", manualTime[sel]);
-			break;
-		case Button::Enter:
-			sel++;
+            break;
+        case Button::Enter:
+            sel++;
             LOG_T("Selected=%d", sel);
-			break;
-		default:
-			break;
-		}
-		manualTimeHelper(manualTime[0], manualTime[1], manualTime[2], manualTime[3], manualTime[4], sel);
+            break;
+        default:
+            break;
+        }
+        manualTimeHelper(manualTime[0], manualTime[1], manualTime[2], manualTime[3], manualTime[4], sel);
         if (++count > 100)
         {
             vTaskDelay(5);
             count = 0;
         }
-	}
+    }
 
-    LOG_T( "hour=%d\n"\
-        "minute=%d\n"\
-        "day=%d\n"\
-        "month=%d\n"\
-        "year=%d",
-        manualTime[0], manualTime[1], manualTime[2], manualTime[3], manualTime[4] );
+    LOG_T("hour=%d\n"
+          "minute=%d\n"
+          "day=%d\n"
+          "month=%d\n"
+          "year=%d",
+          manualTime[0], manualTime[1], manualTime[2], manualTime[3], manualTime[4]);
     tm newTm;
     newTm.tm_sec = 0;
     newTm.tm_hour = manualTime[0];
@@ -401,82 +826,82 @@ void manualTimeSetup()
     newTm.tm_year = manualTime[4] - 1900;
     newTm.tm_isdst = -1; // let mktime decide if the DST is active at the respective time
     time_t newTime = mktime(&newTm);
-    timeval newTv = { newTime, 0 };
+    timeval newTv = {newTime, 0};
     settimeofday(&newTv, nullptr);
 }
 
 // helper function that displays the current selected date and time in manual time mode
 void manualTimeHelper(int h, int m, int d, int mth, int y, int sel)
 {
-	display.clearDisplay();
-	display.setTextSize(1);
-	display.setTextColor(BLACK);
-	display.setCursor(10, 0);
-	display.println(manualTimeTitleString);
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(BLACK);
+    display.setCursor(10, 0);
+    display.println(manualTimeTitleString);
 
-	display.setCursor(27, 15);
-	if (sel == 0)
-	{
-		display.setTextColor(WHITE, BLACK);
-		display.printf(manualTimeFormatString, h);
-		display.setTextColor(BLACK);
-	}
-	else
-	{
-		display.setTextColor(BLACK);
-		display.printf(manualTimeFormatString, h);
-	}
-	display.print(':');
-	if (sel == 1)
-	{
-		display.setTextColor(WHITE, BLACK);
-		display.printf(manualTimeFormatString, m);
-		display.setTextColor(BLACK);
-	}
-	else
-	{
-		display.setTextColor(BLACK);
-		display.printf(manualTimeFormatString, m);
-	}
+    display.setCursor(27, 15);
+    if (sel == 0)
+    {
+        display.setTextColor(WHITE, BLACK);
+        display.printf(manualTimeFormatString, h);
+        display.setTextColor(BLACK);
+    }
+    else
+    {
+        display.setTextColor(BLACK);
+        display.printf(manualTimeFormatString, h);
+    }
+    display.print(':');
+    if (sel == 1)
+    {
+        display.setTextColor(WHITE, BLACK);
+        display.printf(manualTimeFormatString, m);
+        display.setTextColor(BLACK);
+    }
+    else
+    {
+        display.setTextColor(BLACK);
+        display.printf(manualTimeFormatString, m);
+    }
 
-	display.setCursor(14, 30);
-	if (sel == 2)
-	{
-		display.setTextColor(WHITE, BLACK);
-		display.printf(manualTimeFormatString, d);
-		display.setTextColor(BLACK);
-	}
-	else
-	{
-		display.setTextColor(BLACK);
-		display.printf(manualTimeFormatString, d);
-	}
-	display.print('.');
-	if (sel == 3)
-	{
-		display.setTextColor(WHITE, BLACK);
-		display.printf(manualTimeFormatString, mth);
-		display.setTextColor(BLACK);
-	}
-	else
-	{
-		display.setTextColor(BLACK);
-		display.printf(manualTimeFormatString, mth);
-	}
-	display.print('.');
-	if (sel == 4)
-	{
-		display.setTextColor(WHITE, BLACK);
-		display.println(y);
-		display.setTextColor(BLACK);
-	}
-	else
-	{
-		display.setTextColor(BLACK);
-		display.println(y);
-	}
+    display.setCursor(14, 30);
+    if (sel == 2)
+    {
+        display.setTextColor(WHITE, BLACK);
+        display.printf(manualTimeFormatString, d);
+        display.setTextColor(BLACK);
+    }
+    else
+    {
+        display.setTextColor(BLACK);
+        display.printf(manualTimeFormatString, d);
+    }
+    display.print('.');
+    if (sel == 3)
+    {
+        display.setTextColor(WHITE, BLACK);
+        display.printf(manualTimeFormatString, mth);
+        display.setTextColor(BLACK);
+    }
+    else
+    {
+        display.setTextColor(BLACK);
+        display.printf(manualTimeFormatString, mth);
+    }
+    display.print('.');
+    if (sel == 4)
+    {
+        display.setTextColor(WHITE, BLACK);
+        display.println(y);
+        display.setTextColor(BLACK);
+    }
+    else
+    {
+        display.setTextColor(BLACK);
+        display.println(y);
+    }
 
-	display.display();
+    display.display();
 }
 
 void setupWifiTask(void *)
@@ -503,8 +928,7 @@ void setupWifiTask(void *)
         3072,
         nullptr,
         1,
-        &serverTaskHandle
-    );
+        &serverTaskHandle);
 
     vTaskDelete(nullptr);
 }
@@ -557,7 +981,7 @@ void setupWifiHandlePost()
     String ssid = server.arg("ssid");
     String password = server.arg("password");
     LOG_D("Received SSID and password");
-    
+
     storeCredentials(ssid, password);
     // we display a success message and restart the ESP
     display.clearDisplay();
@@ -583,7 +1007,10 @@ void storeCredentials(const String &ssid, const String &password)
         LOG_E("Error starting SPIFFS");
         simpleDisplay(errorOpenSPIFFSString);
         LOG_E("Waiting for user intervention");
-        while (true) { delay(1000); }
+        while (true)
+        {
+            delay(1000);
+        }
     }
     LOG_T("Opening config.txt for writing");
     File wifiConfigFile = SPIFFS.open("/config.txt", "w+");
@@ -592,7 +1019,10 @@ void storeCredentials(const String &ssid, const String &password)
         LOG_E("Error opening config file for writing");
         simpleDisplay(errorOpenConfigWriteString);
         LOG_E("Waiting for user intervention");
-        while (true) { delay(1000); }
+        while (true)
+        {
+            delay(1000);
+        }
     }
     wifiConfigFile.println(ssid);
     wifiConfigFile.println(password);
@@ -611,56 +1041,55 @@ void otaUpdateTask(void *)
         simpleDisplay(errorWifiConnectString);
         // if wifi doesn't work, we do nothing
         LOG_E("Awaiting reset by user");
-        while (true) { delay(100); }
+        while (true)
+        {
+            delay(100);
+        }
     }
     LOG_D("Waiting for update");
     simpleDisplay(updateWaitingString);
     ArduinoOTA.setHostname(otaHostname);
     ArduinoOTA
-        .onStart([]()
-        {
+        .onStart([]() {
             LOG_D("Update started");
             simpleDisplay(updateStartedString);
         })
-        .onEnd([]()
-        {
+        .onEnd([]() {
             LOG_D("Update ended");
             simpleDisplay(updateEndedString);
         })
-        .onProgress([](unsigned int progress, unsigned int total)
-        {
+        .onProgress([](unsigned int progress, unsigned int total) {
             //display.clearDisplay();
             LOG_D("Update progress: %d%%", progress * 100 / total);
             //display.printf(updateProgressFormatString, progress * 100 / total);
             //display.display();
         })
-        .onError([](ota_error_t error)
-        {
+        .onError([](ota_error_t error) {
             display.clearDisplay();
             display.setTextColor(BLACK);
             display.setTextSize(1);
             switch (error)
             {
-                case OTA_AUTH_ERROR:
-                    LOG_E("Update Auth Error");
-                    display.println(updateErrorAuthString);
-                    break;
-                case OTA_BEGIN_ERROR:
-                    LOG_E("Update Begin Error");
-                    display.println(updateErrorBeginString);
-                    break;
-                case OTA_CONNECT_ERROR:
-                    LOG_E("Update Connect Error");
-                    display.println(updateErrorConnectString);
-                    break;
-                case OTA_RECEIVE_ERROR:
-                    LOG_E("Update Receive Error");
-                    display.println(updateErrorReceiveString);
-                    break;
-                case OTA_END_ERROR:
-                    LOG_E("Update End Error");
-                    display.println(updateErrorEndString);
-                    break;
+            case OTA_AUTH_ERROR:
+                LOG_E("Update Auth Error");
+                display.println(updateErrorAuthString);
+                break;
+            case OTA_BEGIN_ERROR:
+                LOG_E("Update Begin Error");
+                display.println(updateErrorBeginString);
+                break;
+            case OTA_CONNECT_ERROR:
+                LOG_E("Update Connect Error");
+                display.println(updateErrorConnectString);
+                break;
+            case OTA_RECEIVE_ERROR:
+                LOG_E("Update Receive Error");
+                display.println(updateErrorReceiveString);
+                break;
+            case OTA_END_ERROR:
+                LOG_E("Update End Error");
+                display.println(updateErrorEndString);
+                break;
             }
             display.display();
         });
@@ -674,8 +1103,7 @@ void otaUpdateTask(void *)
         3072,
         nullptr,
         1,
-        &updateTaskHandle
-    );
+        &updateTaskHandle);
 
     vTaskDelete(nullptr);
 }
@@ -794,7 +1222,6 @@ Button buttonPressed()
         }
         else
             return Button::None;
-        
     }
     if (digitalRead(pinDown))
     {
@@ -808,7 +1235,6 @@ Button buttonPressed()
         }
         else
             return Button::None;
-        
     }
     buttonBeingHeld = false;
     return Button::None;
