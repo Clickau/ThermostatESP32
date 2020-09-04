@@ -93,6 +93,7 @@ void displayErrors(int cursorX, int cursorY);
 void temporaryScheduleSetup();
 void temporaryScheduleHelper(float temp, int duration, int option, int sel);
 
+
 extern "C" void app_main()
 {
     initArduino();
@@ -109,6 +110,280 @@ extern "C" void app_main()
 
     // menu where the user selects which operation mode should be used
     showStartupMenu();
+}
+
+
+/* Tasks */
+
+void normalOperationTask(void *)
+{
+    LOG_T("begin");
+    LOG_T("Starting DHT sensor");
+    dht.setup(pinDHT, dhtType);
+    LOG_D("Started DHT sensor");
+    simpleDisplay(waitingForWifiString);
+    if (!connectSTAMode())
+    {
+        LOG_D("Error connecting to Wifi");
+        simpleDisplay(errorWifiConnectString);
+        wifiWorking = false;
+    }
+    LOG_T("Starting NTP");
+    configTzTime(timezoneString, ntpServer0, ntpServer1, ntpServer2);
+    LOG_D("Started NTP");
+    if (wifiWorking)
+    {
+        LOG_D("Trying to get NTP time");
+        simpleDisplay(waitingForNTPString);
+        uint32_t startMillis = millis();
+        while ((sntp_getreachability(0) | sntp_getreachability(1) | sntp_getreachability(2)) == 0 && millis() - startMillis < waitingTimeNTP)
+        {
+            delay(100);
+        }
+        if ((sntp_getreachability(0) | sntp_getreachability(1) | sntp_getreachability(2)) == 0)
+        {
+            LOG_D("Couldn't get NTP time");
+            ntpWorking = false;
+            LOG_D("Entering Manual Time Setup");
+            simpleDisplay(errorNTPString);
+            delay(3000);
+            manualTimeSetup();
+        }
+        else
+        {
+            time_t now;
+            time(&now);
+            LOG_D("Got NTP time: %ld", now);
+        }
+
+        simpleDisplay(waitingForFirebaseString);
+        LOG_D("Initializing Firebase stream");
+        firebaseClient.initializeStream("/Schedules");
+    }
+    else
+    {
+        LOG_D("Bypassed getting NTP time");
+        ntpWorking = false;
+        LOG_D("Bypassed initializing Firebase stream");
+        firebaseClient.setError(true);
+        LOG_D("Entering Manual Time Setup");
+        delay(3000);
+        manualTimeSetup();
+    }
+
+    // we are sure we have the current time (either via ntp or manual time)
+    time_t now;
+    tm tmnow;
+    time(&now);
+    localtime_r(&now, &tmnow);
+    LOG_D("Got Time: %s", ctime(&now));
+
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.println(gotTimeString);
+    display.printf(gotTimeHourFormatString, tmnow.tm_hour, tmnow.tm_min);
+    display.printf(gotTimeDateFormatString, tmnow.tm_mday, tmnow.tm_mon + 1, tmnow.tm_year + 1900);
+    display.display();
+
+    xTaskCreatePinnedToCore(
+        firebaseLoopTask,
+        "firebaseLoopTask",
+        5120,
+        nullptr,
+        1,
+        &firebaseTaskHandle,
+        0);
+
+    xTaskCreatePinnedToCore(
+        uiLoopTask,
+        "uiLoopTask",
+        2048,
+        nullptr,
+        1,
+        &uiTaskHandle,
+        1);
+
+    vTaskDelete(nullptr);
+}
+
+void setupWifiTask(void *)
+{
+    LOG_T("begin");
+    setupWifiDisplayInfo();
+
+    LOG_T("Starting Wifi AP");
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(setupWifiAPSSID, setupWifiAPPassword);
+    delay(1000); // delay to let the AP initialize
+    WiFi.softAPConfig(setupWifiServerIP, setupWifiServerIP, IPAddress(255, 255, 255, 0));
+    LOG_T("Started Wifi AP");
+
+    LOG_T("Starting server");
+    server.on("/", setupWifiHandleRoot);
+    server.on("/post", HTTPMethod::HTTP_POST, setupWifiHandlePost);
+    server.begin();
+    LOG_D("Started server");
+
+    xTaskCreate(
+        serverLoopTask,
+        "serverLoopTask",
+        3072,
+        nullptr,
+        1,
+        &serverTaskHandle);
+
+    vTaskDelete(nullptr);
+}
+
+void otaUpdateTask(void *)
+{
+    LOG_T("begin");
+    simpleDisplay(waitingForWifiString);
+    if (!connectSTAMode())
+    {
+        LOG_E("Error connecting to Wifi");
+        simpleDisplay(errorWifiConnectString);
+        // if wifi doesn't work, we do nothing
+        LOG_E("Awaiting reset by user");
+        while (true)
+        {
+            delay(100);
+        }
+    }
+    LOG_D("Waiting for update");
+    simpleDisplay(updateWaitingString);
+    ArduinoOTA.setHostname(otaHostname);
+    ArduinoOTA
+        .onStart([]() {
+            LOG_D("Update started");
+            simpleDisplay(updateStartedString);
+        })
+        .onEnd([]() {
+            LOG_D("Update ended");
+            simpleDisplay(updateEndedString);
+        })
+        .onProgress([](unsigned int progress, unsigned int total) {
+            //display.clearDisplay();
+            LOG_D("Update progress: %d%%", progress * 100 / total);
+            //display.printf(updateProgressFormatString, progress * 100 / total);
+            //display.display();
+        })
+        .onError([](ota_error_t error) {
+            display.clearDisplay();
+            display.setTextColor(BLACK);
+            display.setTextSize(1);
+            switch (error)
+            {
+            case OTA_AUTH_ERROR:
+                LOG_E("Update Auth Error");
+                display.println(updateErrorAuthString);
+                break;
+            case OTA_BEGIN_ERROR:
+                LOG_E("Update Begin Error");
+                display.println(updateErrorBeginString);
+                break;
+            case OTA_CONNECT_ERROR:
+                LOG_E("Update Connect Error");
+                display.println(updateErrorConnectString);
+                break;
+            case OTA_RECEIVE_ERROR:
+                LOG_E("Update Receive Error");
+                display.println(updateErrorReceiveString);
+                break;
+            case OTA_END_ERROR:
+                LOG_E("Update End Error");
+                display.println(updateErrorEndString);
+                break;
+            }
+            display.display();
+        });
+    LOG_T("Starting OTA Update client");
+    ArduinoOTA.begin();
+    LOG_D("Started OTA Update client");
+
+    xTaskCreate(
+        updateLoopTask,
+        "updateLoopTask",
+        3072,
+        nullptr,
+        1,
+        &updateTaskHandle);
+
+    vTaskDelete(nullptr);
+}
+
+void serverLoopTask(void *)
+{
+    LOG_T("begin");
+    while (true)
+    {
+        server.handleClient();
+        vTaskDelay(5);
+    }
+    vTaskDelete(nullptr);
+}
+
+void updateLoopTask(void *)
+{
+    LOG_T("begin");
+    while (true)
+    {
+        ArduinoOTA.handle();
+        vTaskDelay(5);
+    }
+    vTaskDelete(nullptr);
+}
+
+void firebaseLoopTask(void *)
+{
+    LOG_T("begin");
+    while (true)
+    {
+        vTaskDelay(50);
+        if (firebaseClient.getError())
+            continue;
+        if (firebaseClient.consumeStreamIfAvailable())
+        {
+            // something in the database changed, we download the whole database
+            // we try it for timesTryFirebase times, before we give up
+            LOG_D("New change in Firebase stream");
+            LOG_D("Trying to get new data");
+            for (int i = 1; i <= timesTryFirebase; i++)
+            {
+                LOG_D("Attempt %d/%d", i, timesTryFirebase);
+                firebaseClient.getJson("/Schedules", scheduleString);
+                if (!firebaseClient.getError())
+                    break;
+            }
+            if (!firebaseClient.getError())
+            {
+                LOG_D("Got new schedules");
+            }
+            else
+            {
+                LOG_D("Failed to get new schedules");
+            }
+        }
+    }
+
+    vTaskDelete(nullptr);
+}
+
+void uiLoopTask(void *)
+{
+    while (true)
+    {
+        ntpWorking = (sntp_getreachability(0) | sntp_getreachability(1) | sntp_getreachability(2)) != 0;
+        wifiWorking = WiFi.isConnected();
+        updateDisplay();
+        if (buttonPressed() == Button::Enter)
+        {
+            temporaryScheduleSetup();
+        }
+        vTaskDelay(10);
+    }
+
+    vTaskDelete(nullptr);
 }
 
 void showStartupMenu()
@@ -234,113 +509,8 @@ void startupMenuHelper(int highlightedOption)
     display.display();
 }
 
-void normalOperationTask(void *)
-{
-    LOG_T("begin");
-    LOG_T("Starting DHT sensor");
-    dht.setup(pinDHT, dhtType);
-    LOG_D("Started DHT sensor");
-    simpleDisplay(waitingForWifiString);
-    if (!connectSTAMode())
-    {
-        LOG_D("Error connecting to Wifi");
-        simpleDisplay(errorWifiConnectString);
-        wifiWorking = false;
-    }
-    LOG_T("Starting NTP");
-    configTzTime(timezoneString, ntpServer0, ntpServer1, ntpServer2);
-    LOG_D("Started NTP");
-    if (wifiWorking)
-    {
-        LOG_D("Trying to get NTP time");
-        simpleDisplay(waitingForNTPString);
-        uint32_t startMillis = millis();
-        while ((sntp_getreachability(0) | sntp_getreachability(1) | sntp_getreachability(2)) == 0 && millis() - startMillis < waitingTimeNTP)
-        {
-            delay(100);
-        }
-        if ((sntp_getreachability(0) | sntp_getreachability(1) | sntp_getreachability(2)) == 0)
-        {
-            LOG_D("Couldn't get NTP time");
-            ntpWorking = false;
-            LOG_D("Entering Manual Time Setup");
-            simpleDisplay(errorNTPString);
-            delay(3000);
-            manualTimeSetup();
-        }
-        else
-        {
-            time_t now;
-            time(&now);
-            LOG_D("Got NTP time: %ld", now);
-        }
 
-        simpleDisplay(waitingForFirebaseString);
-        LOG_D("Initializing Firebase stream");
-        firebaseClient.initializeStream("/Schedules");
-    }
-    else
-    {
-        LOG_D("Bypassed getting NTP time");
-        ntpWorking = false;
-        LOG_D("Bypassed initializing Firebase stream");
-        firebaseClient.setError(true);
-        LOG_D("Entering Manual Time Setup");
-        delay(3000);
-        manualTimeSetup();
-    }
-
-    // we are sure we have the current time (either via ntp or manual time)
-    time_t now;
-    tm tmnow;
-    time(&now);
-    localtime_r(&now, &tmnow);
-    LOG_D("Got Time: %s", ctime(&now));
-
-    display.clearDisplay();
-    display.setCursor(0, 0);
-    display.println(gotTimeString);
-    display.printf(gotTimeHourFormatString, tmnow.tm_hour, tmnow.tm_min);
-    display.printf(gotTimeDateFormatString, tmnow.tm_mday, tmnow.tm_mon + 1, tmnow.tm_year + 1900);
-    display.display();
-
-    xTaskCreatePinnedToCore(
-        firebaseLoopTask,
-        "firebaseLoopTask",
-        5120,
-        nullptr,
-        1,
-        &firebaseTaskHandle,
-        0);
-
-    xTaskCreatePinnedToCore(
-        uiLoopTask,
-        "uiLoopTask",
-        2048,
-        nullptr,
-        1,
-        &uiTaskHandle,
-        1);
-
-    vTaskDelete(nullptr);
-}
-
-void uiLoopTask(void *)
-{
-    while (true)
-    {
-        ntpWorking = (sntp_getreachability(0) | sntp_getreachability(1) | sntp_getreachability(2)) != 0;
-        wifiWorking = WiFi.isConnected();
-        updateDisplay();
-        if (buttonPressed() == Button::Enter)
-        {
-            temporaryScheduleSetup();
-        }
-        vTaskDelay(10);
-    }
-
-    vTaskDelete(nullptr);
-}
+/* Temporary Schedule */
 
 void temporaryScheduleSetup()
 {
@@ -597,6 +767,9 @@ void temporaryScheduleHelper(float temp, int duration, int option, int sel)
     display.display();
 }
 
+
+/* Display helpers */
+
 void updateDisplay()
 {
     display.clearDisplay();
@@ -725,40 +898,8 @@ void displayTemp(float temp, int cursorX, int cursorY)
     display.printf(".%d", (int)(decimals + 0.5f));
 }
 
-void firebaseLoopTask(void *)
-{
-    LOG_T("begin");
-    while (true)
-    {
-        vTaskDelay(50);
-        if (firebaseClient.getError())
-            continue;
-        if (firebaseClient.consumeStreamIfAvailable())
-        {
-            // something in the database changed, we download the whole database
-            // we try it for timesTryFirebase times, before we give up
-            LOG_D("New change in Firebase stream");
-            LOG_D("Trying to get new data");
-            for (int i = 1; i <= timesTryFirebase; i++)
-            {
-                LOG_D("Attempt %d/%d", i, timesTryFirebase);
-                firebaseClient.getJson("/Schedules", scheduleString);
-                if (!firebaseClient.getError())
-                    break;
-            }
-            if (!firebaseClient.getError())
-            {
-                LOG_D("Got new schedules");
-            }
-            else
-            {
-                LOG_D("Failed to get new schedules");
-            }
-        }
-    }
 
-    vTaskDelete(nullptr);
-}
+/* Manual Time */
 
 // prompts the user to enter the current date and time
 void manualTimeSetup()
@@ -904,45 +1045,8 @@ void manualTimeHelper(int h, int m, int d, int mth, int y, int sel)
     display.display();
 }
 
-void setupWifiTask(void *)
-{
-    LOG_T("begin");
-    setupWifiDisplayInfo();
 
-    LOG_T("Starting Wifi AP");
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP(setupWifiAPSSID, setupWifiAPPassword);
-    delay(1000); // delay to let the AP initialize
-    WiFi.softAPConfig(setupWifiServerIP, setupWifiServerIP, IPAddress(255, 255, 255, 0));
-    LOG_T("Started Wifi AP");
-
-    LOG_T("Starting server");
-    server.on("/", setupWifiHandleRoot);
-    server.on("/post", HTTPMethod::HTTP_POST, setupWifiHandlePost);
-    server.begin();
-    LOG_D("Started server");
-
-    xTaskCreate(
-        serverLoopTask,
-        "serverLoopTask",
-        3072,
-        nullptr,
-        1,
-        &serverTaskHandle);
-
-    vTaskDelete(nullptr);
-}
-
-void serverLoopTask(void *)
-{
-    LOG_T("begin");
-    while (true)
-    {
-        server.handleClient();
-        vTaskDelay(5);
-    }
-    vTaskDelete(nullptr);
-}
+/* Setup Wifi Helpers */
 
 void setupWifiDisplayInfo()
 {
@@ -1031,93 +1135,8 @@ void storeCredentials(const String &ssid, const String &password)
     LOG_D("Stored credentials successfully");
 }
 
-void otaUpdateTask(void *)
-{
-    LOG_T("begin");
-    simpleDisplay(waitingForWifiString);
-    if (!connectSTAMode())
-    {
-        LOG_E("Error connecting to Wifi");
-        simpleDisplay(errorWifiConnectString);
-        // if wifi doesn't work, we do nothing
-        LOG_E("Awaiting reset by user");
-        while (true)
-        {
-            delay(100);
-        }
-    }
-    LOG_D("Waiting for update");
-    simpleDisplay(updateWaitingString);
-    ArduinoOTA.setHostname(otaHostname);
-    ArduinoOTA
-        .onStart([]() {
-            LOG_D("Update started");
-            simpleDisplay(updateStartedString);
-        })
-        .onEnd([]() {
-            LOG_D("Update ended");
-            simpleDisplay(updateEndedString);
-        })
-        .onProgress([](unsigned int progress, unsigned int total) {
-            //display.clearDisplay();
-            LOG_D("Update progress: %d%%", progress * 100 / total);
-            //display.printf(updateProgressFormatString, progress * 100 / total);
-            //display.display();
-        })
-        .onError([](ota_error_t error) {
-            display.clearDisplay();
-            display.setTextColor(BLACK);
-            display.setTextSize(1);
-            switch (error)
-            {
-            case OTA_AUTH_ERROR:
-                LOG_E("Update Auth Error");
-                display.println(updateErrorAuthString);
-                break;
-            case OTA_BEGIN_ERROR:
-                LOG_E("Update Begin Error");
-                display.println(updateErrorBeginString);
-                break;
-            case OTA_CONNECT_ERROR:
-                LOG_E("Update Connect Error");
-                display.println(updateErrorConnectString);
-                break;
-            case OTA_RECEIVE_ERROR:
-                LOG_E("Update Receive Error");
-                display.println(updateErrorReceiveString);
-                break;
-            case OTA_END_ERROR:
-                LOG_E("Update End Error");
-                display.println(updateErrorEndString);
-                break;
-            }
-            display.display();
-        });
-    LOG_T("Starting OTA Update client");
-    ArduinoOTA.begin();
-    LOG_D("Started OTA Update client");
 
-    xTaskCreate(
-        updateLoopTask,
-        "updateLoopTask",
-        3072,
-        nullptr,
-        1,
-        &updateTaskHandle);
-
-    vTaskDelete(nullptr);
-}
-
-void updateLoopTask(void *)
-{
-    LOG_T("begin");
-    while (true)
-    {
-        ArduinoOTA.handle();
-        vTaskDelay(5);
-    }
-    vTaskDelete(nullptr);
-}
+/* General purpose */
 
 // helper function that clears the display and prints the String parameter in the top left corner
 void simpleDisplay(const char *str)
