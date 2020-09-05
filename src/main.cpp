@@ -24,21 +24,33 @@ enum class Button
     Down
 };
 
+
 bool heaterState = false;
+SemaphoreHandle_t heaterStateMutex;
+
 String scheduleString;
+SemaphoreHandle_t scheduleStringMutex;
+
 bool wifiWorking = true;
-bool ntpWorking = true;
+bool ntpWorking  = true;
 bool tempWorking = true;
-bool humWorking = true;
+bool humWorking  = true;
+SemaphoreHandle_t errorsMutex;
+
 float temperature = NAN;
-int humidity = -1;
-unsigned long lastRetryErrors = 0;
-unsigned long lastTemperatureUpdate = 0;
-bool temporaryScheduleActive = false;
-float temporaryScheduleTemp = NAN;
-time_t temporaryScheduleEnd = 0;
-volatile unsigned long lastButtonPress = 0;
-portMUX_TYPE buttonMux = portMUX_INITIALIZER_UNLOCKED;
+int   humidity    = -1;
+SemaphoreHandle_t temperatureHumidityMutex;
+
+unsigned long          lastRetryErrors       = 0;
+unsigned long          lastTemperatureUpdate = 0;
+volatile unsigned long lastButtonPress       = 0;
+portMUX_TYPE           lastButtonPressMux    = portMUX_INITIALIZER_UNLOCKED;
+
+bool   temporaryScheduleActive = false;
+float  temporaryScheduleTemp   = NAN;
+time_t temporaryScheduleEnd    = 0;
+SemaphoreHandle_t temporaryScheduleMutex;
+
 
 Adafruit_PCD8544 display{pinDC, pinCS, pinRST};
 FirebaseClient firebaseClient{firebaseRootCA, firebasePath, firebaseSecret};
@@ -104,6 +116,11 @@ extern "C" void app_main()
 {
     initArduino();
     LOG_INIT();
+    temporaryScheduleMutex = xSemaphoreCreateMutex();
+    errorsMutex = xSemaphoreCreateMutex();
+    temperatureHumidityMutex = xSemaphoreCreateMutex();
+    scheduleStringMutex = xSemaphoreCreateMutex();
+    heaterStateMutex = xSemaphoreCreateMutex();
     // stopping the heater right at startup
     pinMode(pinHeater, OUTPUT);
     pinMode(pinUp, INPUT_PULLDOWN);
@@ -377,11 +394,14 @@ void firebaseLoopTask(void *)
 
 void uiLoopTask(void *)
 {
+    LOG_T("begin");
     subscribeToButtonEvents(uiTaskHandle);
     while (true)
     {
+        xSemaphoreTake(errorsMutex, portMAX_DELAY);
         ntpWorking = (sntp_getreachability(0) | sntp_getreachability(1) | sntp_getreachability(2)) != 0;
         wifiWorking = WiFi.isConnected();
+        xSemaphoreGive(errorsMutex);
         updateDisplay();
         uint32_t notificationValue = 0;
         BaseType_t result = xTaskNotifyWait(
@@ -537,6 +557,7 @@ void temporaryScheduleSetup()
     int duration = 30;
     int option = 0;
     int sel = 0;
+    xSemaphoreTake(temporaryScheduleMutex, portMAX_DELAY);
     if (temporaryScheduleActive)
     {
         LOG_T("Modifying current temporary schedule");
@@ -544,6 +565,7 @@ void temporaryScheduleSetup()
         // the new temporary schedule will end at the same time as the old one
         duration = -1;
     }
+    xSemaphoreGive(temporaryScheduleMutex);
     LOG_T("temp=%f\n"
         "duration=%d\n"
         "option=%d\n"
@@ -649,6 +671,7 @@ void temporaryScheduleSetup()
             portMAX_DELAY);
     }
 
+    xSemaphoreTake(temporaryScheduleMutex, portMAX_DELAY);
     switch (option)
     {
     case 0:
@@ -675,6 +698,7 @@ void temporaryScheduleSetup()
         LOG_D("Deleted temporary schedule");
         break;
     }
+    xSemaphoreGive(temporaryScheduleMutex);
 }
 
 // helper function that displays the selected values on the screen
@@ -704,6 +728,7 @@ void temporaryScheduleHelper(float temp, int duration, int option, int sel)
     if (duration == -1)
     {
         int ptDuration;
+        xSemaphoreTake(temporaryScheduleMutex, portMAX_DELAY);
         if (temporaryScheduleEnd == -1)
             ptDuration = -1;
         else
@@ -712,6 +737,7 @@ void temporaryScheduleHelper(float temp, int duration, int option, int sel)
             time(&now);
             ptDuration = (temporaryScheduleEnd - now) / 60;
         }
+        xSemaphoreGive(temporaryScheduleMutex);
         if (ptDuration == -1)
         {
             display.print(temporaryScheduleDurationInfiniteString);
@@ -795,8 +821,10 @@ void updateDisplay()
     localtime_r(&now, &tmnow);
     displayDate(tmnow.tm_mday, tmnow.tm_mon + 1, tmnow.tm_year + 1900, tmnow.tm_wday, 3, 32);
     displayClock(tmnow.tm_hour, tmnow.tm_min, 42, 20);
+    xSemaphoreTake(temperatureHumidityMutex, portMAX_DELAY);
     displayTemp(temperature, 48, 32);
     displayHumidity(humidity, 3, 18);
+    xSemaphoreGive(temperatureHumidityMutex);
     displayFlame(flame, 75, 0, 8, 12); // the last two arguments are the width and the height of the flame icon
     displayErrors(0, 0);
     display.display();
@@ -805,6 +833,7 @@ void updateDisplay()
 // cursorX and cursorY are the location of the top left corner
 void displayErrors(int cursorX, int cursorY)
 {
+    xSemaphoreTake(errorsMutex, portMAX_DELAY);
     display.setCursor(cursorX, cursorY);
     if (!wifiWorking)
     {
@@ -838,6 +867,7 @@ void displayErrors(int cursorX, int cursorY)
         display.print(displayErrorHumidityString);
         display.write(' ');
     }
+    xSemaphoreGive(errorsMutex);
 }
 
 // cursorX and cursorY are the location of the top left corner
@@ -858,8 +888,10 @@ void displayHumidity(int hum, int cursorX, int cursorY)
 // only displays the flame if the heater is on
 void displayFlame(const uint8_t *flameBitmap, int cursorX, int cursorY, int width, int height)
 {
+    xSemaphoreTake(heaterStateMutex, portMAX_DELAY);
     if (heaterState)
         display.drawBitmap(cursorX, cursorY, flameBitmap, width, height, BLACK);
+    xSemaphoreGive(heaterStateMutex);
 }
 
 // cursorX and cursorY are the location of the top left corner
@@ -1250,7 +1282,9 @@ void unsubscribeFromButtonEvents()
 void sendSignalToHeater(bool signal)
 {
     LOG_D("Sending signal to heater: %s", signal ? "on" : "off");
+    xSemaphoreTake(heaterStateMutex, portMAX_DELAY);
     heaterState = signal;
+    xSemaphoreGive(heaterStateMutex);
     digitalWrite(pinHeater, signal);
 }
 
@@ -1259,7 +1293,7 @@ void sendSignalToHeater(bool signal)
 
 void IRAM_ATTR buttonISR(void *button)
 {
-    portENTER_CRITICAL_ISR(&buttonMux);
+    portENTER_CRITICAL_ISR(&lastButtonPressMux);
     if (millis() - lastButtonPress >= buttonDebounceTime)
     {
         lastButtonPress = millis();
@@ -1275,5 +1309,5 @@ void IRAM_ATTR buttonISR(void *button)
             portYIELD_FROM_ISR();
         }
     }
-    portEXIT_CRITICAL_ISR(&buttonMux);
+    portEXIT_CRITICAL_ISR(&lastButtonPressMux);
 }

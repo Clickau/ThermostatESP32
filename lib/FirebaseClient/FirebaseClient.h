@@ -64,6 +64,8 @@ private:
     WiFiClientSecure requestClientSecure;
 
     String makeURL(const char *path);
+
+    SemaphoreHandle_t errorMutex;
 };
 
 #endif

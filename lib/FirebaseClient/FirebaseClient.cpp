@@ -10,6 +10,7 @@ FirebaseClient::FirebaseClient(const char *_rootCA, const char *_firebaseURL, co
 {
     streamingClientSecure.setCACert(rootCA);
     requestClientSecure.setCACert(rootCA);
+    errorMutex = xSemaphoreCreateMutex();
 }
 
 bool FirebaseClient::consumeStreamIfAvailable()
@@ -124,12 +125,17 @@ String FirebaseClient::makeURL(const char *path)
 
 bool FirebaseClient::getError()
 {
-    return error;
+    xSemaphoreTake(errorMutex, portMAX_DELAY);
+    bool errorCopy = error;
+    xSemaphoreGive(errorMutex);
+    return errorCopy;
 }
 
 void FirebaseClient::setError(bool value)
 {
+    xSemaphoreTake(errorMutex, portMAX_DELAY);
     error = value;
+    xSemaphoreGive(errorMutex);
 }
 
 void FirebaseClient::getJson(const char *path, String &result)
