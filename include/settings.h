@@ -64,3 +64,7 @@ const unsigned long intervalUpdateTemperature          = 10000;   // (ms) The ti
 // Temperature settings
 const float temporaryScheduleTempResolution = 0.5f;  // The minimum increment in temperature in the Temporary Schedule menu, for example if it is 0.5f, you can set the target temperature to 20 degrees or 20.5, but not 20.2
 const float tempThreshold                   = 0.5f;  // The temperature difference needed between the set temperature and the current room temperature to trigger the heater
+
+
+// Button settings
+const unsigned long buttonDebounceTime = 200;  // (ms) The minimum time between two button presses, used to prevent registering the same button press multiple times due to bouncing

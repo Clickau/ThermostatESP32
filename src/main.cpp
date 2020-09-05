@@ -18,7 +18,7 @@
 
 enum class Button
 {
-    None,
+    None = 0,
     Enter,
     Up,
     Down
@@ -37,7 +37,8 @@ unsigned long lastTemperatureUpdate = 0;
 bool temporaryScheduleActive = false;
 float temporaryScheduleTemp = NAN;
 time_t temporaryScheduleEnd = 0;
-bool buttonBeingHeld = false;
+volatile unsigned long lastButtonPress = 0;
+portMUX_TYPE buttonMux = portMUX_INITIALIZER_UNLOCKED;
 
 Adafruit_PCD8544 display{pinDC, pinCS, pinRST};
 FirebaseClient firebaseClient{firebaseRootCA, firebasePath, firebaseSecret};
@@ -49,6 +50,7 @@ TaskHandle_t serverTaskHandle;
 TaskHandle_t updateTaskHandle;
 TaskHandle_t firebaseTaskHandle;
 TaskHandle_t uiTaskHandle;
+TaskHandle_t buttonSubscribedTaskHandle;
 
 // Tasks
 void normalOperationTask(void *);
@@ -61,10 +63,11 @@ void uiLoopTask(void *);
 
 // General purpose
 void sendSignalToHeater(bool signal);
-Button buttonPressed();
 void simpleDisplay(const char *str);
 bool connectSTAMode();
 void getCredentials(String &ssid, String &password);
+void subscribeToButtonEvents(TaskHandle_t taskHandle);
+void unsubscribeFromButtonEvents();
 
 // Startup Menu
 void showStartupMenu();
@@ -92,6 +95,9 @@ void displayErrors(int cursorX, int cursorY);
 // Temporary Schedule
 void temporaryScheduleSetup();
 void temporaryScheduleHelper(float temp, int duration, int option, int sel);
+
+// ISRs
+void buttonISR(void *button);
 
 
 extern "C" void app_main()
@@ -371,18 +377,28 @@ void firebaseLoopTask(void *)
 
 void uiLoopTask(void *)
 {
+    subscribeToButtonEvents(uiTaskHandle);
     while (true)
     {
         ntpWorking = (sntp_getreachability(0) | sntp_getreachability(1) | sntp_getreachability(2)) != 0;
         wifiWorking = WiFi.isConnected();
         updateDisplay();
-        if (buttonPressed() == Button::Enter)
+        uint32_t notificationValue = 0;
+        BaseType_t result = xTaskNotifyWait(
+            pdFALSE,
+            ULONG_MAX,
+            &notificationValue,
+            10); // wait maximum 10 ticks so that we update the display around every 100 ms
+        if (result == pdTRUE)
         {
-            temporaryScheduleSetup();
+            Button pressed = static_cast<Button>(notificationValue);
+            if (pressed == Button::Enter)
+            {
+                temporaryScheduleSetup();
+            }
         }
-        vTaskDelay(10);
     }
-
+    unsubscribeFromButtonEvents();
     vTaskDelete(nullptr);
 }
 
@@ -394,56 +410,56 @@ void showStartupMenu()
     // first the selected option is Normal Operation
     LOG_T("begin");
     startupMenuHelper(0);
-    int currentHighlightedValue = 0;
-    LOG_T("currentHighlightedValue=%d", currentHighlightedValue);
-    unsigned long previousTime = millis();
-    bool autoselect = true;
-    Button lastButtonPressed = buttonPressed();
-    uint32_t count = 0;
-    while (lastButtonPressed != Button::Enter)
+    size_t selectedOption = 0;
+    LOG_T("selectedOption=%d", selectedOption);
+    subscribeToButtonEvents(xTaskGetCurrentTaskHandle());
+
+    uint32_t notificationValue;
+    BaseType_t result = xTaskNotifyWait(
+        pdFALSE,
+        ULONG_MAX,
+        &notificationValue,
+        pdMS_TO_TICKS(waitingTimeInStartupMenu));
+    if (result == pdTRUE)
     {
-        if (lastButtonPressed == Button::Up)
+        // a button was pressed, do not autoselect
+        while (true)
         {
-            autoselect = false;
-            if (currentHighlightedValue != 0)
-                currentHighlightedValue--;
-            else
-                currentHighlightedValue = 2;
-            LOG_T("currentHighlightedValue=%d", currentHighlightedValue);
-            startupMenuHelper(currentHighlightedValue);
-        }
-        else if (lastButtonPressed == Button::Down)
-        {
-            autoselect = false;
-            if (currentHighlightedValue != 2)
-                currentHighlightedValue++;
-            else
-                currentHighlightedValue = 0;
-            LOG_T("currentHighlightedValue=%d", currentHighlightedValue);
-            startupMenuHelper(currentHighlightedValue);
-        }
-        if (autoselect && (millis() - previousTime >= waitingTimeInStartupMenu))
-        {
-            LOG_D("Autoselected normal operation");
-            break;
-        }
-        lastButtonPressed = buttonPressed();
-        // give CPU time to the IDLE task every few hundred milliseconds
-        if (++count >= 100000)
-        {
-            vTaskDelay(5);
-            count = 0;
+            Button pressed = static_cast<Button>(notificationValue);
+            if (pressed == Button::Up)
+            {
+                if (selectedOption != 0)
+                    selectedOption--;
+                else
+                    selectedOption = 2;
+                LOG_T("selectedOption=%d", selectedOption);
+                startupMenuHelper(selectedOption);
+            }
+            else if (pressed == Button::Down)
+            {
+                if (selectedOption != 2)
+                    selectedOption++;
+                else
+                    selectedOption = 0;
+                LOG_T("selectedOption=%d", selectedOption);
+                startupMenuHelper(selectedOption);
+            }
+            else if (pressed == Button::Enter)
+                break;
+            
+            xTaskNotifyWait(
+                pdFALSE,
+                ULONG_MAX,
+                &notificationValue,
+                portMAX_DELAY);
         }
     }
+    unsubscribeFromButtonEvents();
     // we clear the display before entering the chosen setup
     display.clearDisplay();
     display.display();
-    if (autoselect)
-    {
-        currentHighlightedValue = 0;
-    }
-    LOG_D("User selected mode: %d", currentHighlightedValue);
-    switch (currentHighlightedValue)
+    LOG_D("User selected mode: %d", selectedOption);
+    switch (selectedOption)
     {
     case 0:
         xTaskCreate(
@@ -528,34 +544,35 @@ void temporaryScheduleSetup()
         // the new temporary schedule will end at the same time as the old one
         duration = -1;
     }
-    unsigned long previousTime = millis();
-    bool autoselect = true;
     LOG_T("temp=%f\n"
-          "duration=%d\n"
-          "option=%d\n"
-          "sel=%d",
-          temp, duration, option, sel);
+        "duration=%d\n"
+        "option=%d\n"
+        "sel=%d",
+        temp, duration, option, sel);
     temporaryScheduleHelper(temp, duration, option, sel);
-    uint32_t count = 0;
-    while (sel < 3)
+
+    uint32_t notificationValue;
+    BaseType_t result = xTaskNotifyWait(
+        pdFALSE,
+        ULONG_MAX,
+        &notificationValue,
+        pdMS_TO_TICKS(waitingTimeInTemporaryScheduleMenu));
+    if (result == pdFALSE)
     {
-        Button pressed = buttonPressed();
-        if (pressed == Button::None)
-        {
-            if (autoselect && millis() - previousTime > waitingTimeInTemporaryScheduleMenu)
-            {
-                LOG_D("Exiting menu because nothing was pressed");
-                break;
-            }
-        }
+        LOG_D("Exiting menu because nothing was pressed");
+        return;
+    }
+    while (true)
+    {
+        Button pressed = static_cast<Button>(notificationValue);
         if (pressed == Button::Enter)
         {
             sel++;
-            autoselect = false;
+            if (sel >= 3)
+                break;
         }
         else if (pressed == Button::Up)
         {
-            autoselect = false;
             switch (sel)
             {
             case 0:
@@ -590,7 +607,6 @@ void temporaryScheduleSetup()
         }
         else if (pressed == Button::Down)
         {
-            autoselect = false;
             switch (sel)
             {
             case 0:
@@ -626,19 +642,16 @@ void temporaryScheduleSetup()
         }
         temporaryScheduleHelper(temp, duration, option, sel);
 
-        if (++count > 100)
-        {
-            vTaskDelay(10);
-            count = 0;
-        }
+        xTaskNotifyWait(
+            pdFALSE,
+            ULONG_MAX,
+            &notificationValue,
+            portMAX_DELAY);
     }
-    if (option == 1 || autoselect)
+
+    switch (option)
     {
-        LOG_D("Return without changing anything");
-        return;
-    }
-    if (option == 0)
-    {
+    case 0:
         temporaryScheduleActive = true;
         temporaryScheduleTemp = temp;
         if (duration != -1)
@@ -653,11 +666,14 @@ void temporaryScheduleSetup()
             }
         }
         LOG_D("Saved temporary schedule");
-    }
-    else if (option == 2)
-    {
+        break;
+    case 1:
+        LOG_D("Return without changing anything");
+        break;
+    case 2:
         temporaryScheduleActive = false;
         LOG_D("Deleted temporary schedule");
+        break;
     }
 }
 
@@ -917,11 +933,18 @@ void manualTimeSetup()
           "year=%d\n"
           "Selected=%d",
           manualTime[0], manualTime[1], manualTime[2], manualTime[3], manualTime[4], sel);
-    uint32_t count = 0;
+    
+    subscribeToButtonEvents(setupTaskHandle);
     while (sel < 5)
     {
-        Button lastPressed = buttonPressed();
-        switch (lastPressed)
+        uint32_t notificationValue;
+        xTaskNotifyWait(
+            pdFALSE,
+            ULONG_MAX,
+            &notificationValue,
+            portMAX_DELAY);
+        Button pressed = static_cast<Button>(notificationValue);
+        switch (pressed)
         {
         case Button::Up:
             if (manualTime[sel] < maxValue[sel])
@@ -945,12 +968,8 @@ void manualTimeSetup()
             break;
         }
         manualTimeHelper(manualTime[0], manualTime[1], manualTime[2], manualTime[3], manualTime[4], sel);
-        if (++count > 100)
-        {
-            vTaskDelay(5);
-            count = 0;
-        }
     }
+    unsubscribeFromButtonEvents();
 
     LOG_T("hour=%d\n"
           "minute=%d\n"
@@ -1210,53 +1229,22 @@ void getCredentials(String &ssid, String &password)
     LOG_D("Got SSID and password");
 }
 
-// if no button is pressed, returns Button::None
-// if a button is pressed, it returns Button::Enter, Button::Up or Button::Down respectively only once, and returns Button::None while the button is being held down
-Button buttonPressed()
+void subscribeToButtonEvents(TaskHandle_t taskHandle)
 {
-    // temporary for testing
-    //return virtualButtonPressed();
-    if (digitalRead(pinEnter))
-    {
-        if (!buttonBeingHeld)
-        {
-            LOG_T("Enter was pressed");
-            buttonBeingHeld = true;
-            // delay for debouncing
-            delay(200);
-            return Button::Enter;
-        }
-        else
-            return Button::None;
-    }
-    if (digitalRead(pinUp))
-    {
-        if (!buttonBeingHeld)
-        {
-            LOG_T("Up was pressed");
-            buttonBeingHeld = true;
-            // delay for debouncing
-            delay(200);
-            return Button::Up;
-        }
-        else
-            return Button::None;
-    }
-    if (digitalRead(pinDown))
-    {
-        if (!buttonBeingHeld)
-        {
-            LOG_T("Down was pressed");
-            buttonBeingHeld = true;
-            // delay for debouncing
-            delay(200);
-            return Button::Down;
-        }
-        else
-            return Button::None;
-    }
-    buttonBeingHeld = false;
-    return Button::None;
+    buttonSubscribedTaskHandle = taskHandle;
+    static_assert(sizeof(Button) <= sizeof(void *));
+    static_assert(sizeof(Button) <= sizeof(uint32_t));
+    attachInterruptArg(pinUp, buttonISR, (void *) Button::Up, RISING);
+    attachInterruptArg(pinDown, buttonISR, (void *) Button::Down, RISING);
+    attachInterruptArg(pinEnter, buttonISR, (void *) Button::Enter, RISING);
+}
+
+void unsubscribeFromButtonEvents()
+{
+    detachInterrupt(pinUp);
+    detachInterrupt(pinDown);
+    detachInterrupt(pinEnter);
+    buttonSubscribedTaskHandle = nullptr;
 }
 
 void sendSignalToHeater(bool signal)
@@ -1264,4 +1252,28 @@ void sendSignalToHeater(bool signal)
     LOG_D("Sending signal to heater: %s", signal ? "on" : "off");
     heaterState = signal;
     digitalWrite(pinHeater, signal);
+}
+
+
+/* ISRs */
+
+void IRAM_ATTR buttonISR(void *button)
+{
+    portENTER_CRITICAL_ISR(&buttonMux);
+    if (millis() - lastButtonPress >= buttonDebounceTime)
+    {
+        lastButtonPress = millis();
+        BaseType_t higherPriorityTaskWoken = pdFALSE;
+        uint32_t buttonValue = (uint32_t) button;
+        xTaskNotifyFromISR(
+            buttonSubscribedTaskHandle,
+            buttonValue,
+            eSetValueWithoutOverwrite,
+            &higherPriorityTaskWoken);
+        if (higherPriorityTaskWoken == pdTRUE)
+        {
+            portYIELD_FROM_ISR();
+        }
+    }
+    portEXIT_CRITICAL_ISR(&buttonMux);
 }
