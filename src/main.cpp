@@ -363,28 +363,49 @@ void firebaseLoopTask(void *)
     while (true)
     {
         vTaskDelay(50);
-        if (firebaseClient.getError())
-            continue;
-        if (firebaseClient.consumeStreamIfAvailable())
-        {
-            // something in the database changed, we download the whole database
-            // we try it for timesTryFirebase times, before we give up
-            LOG_D("New change in Firebase stream");
-            LOG_D("Trying to get new data");
-            for (int i = 1; i <= timesTryFirebase; i++)
+        if (!firebaseClient.getError())
+            if (firebaseClient.consumeStreamIfAvailable())
             {
-                LOG_D("Attempt %d/%d", i, timesTryFirebase);
-                firebaseClient.getJson("/Schedules", scheduleString);
+                // something in the database changed, we download the whole database
+                // we try it for timesTryFirebase times, before we give up
+                LOG_D("New change in Firebase stream");
+                LOG_D("Trying to get new data");
+                for (int i = 1; i <= timesTryFirebase; i++)
+                {
+                    LOG_D("Attempt %d/%d", i, timesTryFirebase);
+                    firebaseClient.getJson("/Schedules", scheduleString);
+                    if (!firebaseClient.getError())
+                        break;
+                }
                 if (!firebaseClient.getError())
-                    break;
+                {
+                    LOG_D("Got new schedules");
+                }
+                else
+                {
+                    LOG_D("Failed to get new schedules");
+                }
             }
-            if (!firebaseClient.getError())
+
+        if (millis() - lastRetryErrors > intervalRetryErrors)
+        {
+            lastRetryErrors = millis();
+            LOG_D("Trying to fix errors");
+            bool newWifiWorking = WiFi.isConnected();
+            if (!newWifiWorking)
             {
-                LOG_D("Got new schedules");
+                LOG_T("Disconnecting Wifi and trying to reconnect");
+                WiFi.disconnect(true);
+                newWifiWorking = connectSTAMode();
             }
-            else
+            xSemaphoreTake(errorsMutex, portMAX_DELAY);
+            wifiWorking = newWifiWorking;
+            ntpWorking = (sntp_getreachability(0) | sntp_getreachability(1) | sntp_getreachability(2)) != 0;
+            xSemaphoreGive(errorsMutex);
+            if (firebaseClient.getError() && newWifiWorking)
             {
-                LOG_D("Failed to get new schedules");
+                LOG_T("Initializing Firebase stream");
+                firebaseClient.initializeStream("/Schedules");
             }
         }
     }
@@ -398,10 +419,6 @@ void uiLoopTask(void *)
     subscribeToButtonEvents(uiTaskHandle);
     while (true)
     {
-        xSemaphoreTake(errorsMutex, portMAX_DELAY);
-        ntpWorking = (sntp_getreachability(0) | sntp_getreachability(1) | sntp_getreachability(2)) != 0;
-        wifiWorking = WiFi.isConnected();
-        xSemaphoreGive(errorsMutex);
         updateDisplay();
         uint32_t notificationValue = 0;
         BaseType_t result = xTaskNotifyWait(
