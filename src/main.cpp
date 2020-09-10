@@ -1,11 +1,11 @@
 #include <Arduino.h>
 #include <WiFi.h>
-#include <Adafruit_GFX.h>
 #include <Adafruit_PCD8544.h>
 #include <WebServer.h>
 #include <SPIFFS.h>
 #include <ArduinoOTA.h>
 #include <lwip/apps/sntp.h>
+#include <DHTesp.h>
 
 #include "string_consts.h"
 #include "settings.h"
@@ -33,8 +33,7 @@ SemaphoreHandle_t scheduleStringMutex;
 
 bool wifiWorking = true;
 bool ntpWorking  = true;
-bool tempWorking = true;
-bool humWorking  = true;
+bool sensorWorking = true;
 SemaphoreHandle_t errorsMutex;
 
 float temperature = NAN;
@@ -42,7 +41,7 @@ int   humidity    = -1;
 SemaphoreHandle_t temperatureHumidityMutex;
 
 unsigned long          lastRetryErrors       = 0;
-unsigned long          lastTemperatureUpdate = 0;
+TickType_t             lastTemperatureUpdate = 0;
 volatile unsigned long lastButtonPress       = 0;
 portMUX_TYPE           lastButtonPressMux    = portMUX_INITIALIZER_UNLOCKED;
 
@@ -63,6 +62,7 @@ TaskHandle_t updateTaskHandle;
 TaskHandle_t firebaseTaskHandle;
 TaskHandle_t uiTaskHandle;
 TaskHandle_t buttonSubscribedTaskHandle;
+TaskHandle_t sensorTaskHandle;
 
 // Tasks
 void normalOperationTask(void *);
@@ -72,6 +72,7 @@ void serverLoopTask(void *);
 void updateLoopTask(void *);
 void firebaseLoopTask(void *);
 void uiLoopTask(void *);
+void sensorLoopTask(void *);
 
 // General purpose
 void sendSignalToHeater(bool signal);
@@ -226,6 +227,15 @@ void normalOperationTask(void *)
         &uiTaskHandle,
         1);
 
+    xTaskCreatePinnedToCore(
+        sensorLoopTask,
+        "sensorLoopTask",
+        2048,
+        nullptr,
+        1,
+        &sensorTaskHandle,
+        0);
+
     vTaskDelete(nullptr);
 }
 
@@ -341,7 +351,7 @@ void serverLoopTask(void *)
     while (true)
     {
         server.handleClient();
-        vTaskDelay(5);
+        delay(5);
     }
     vTaskDelete(nullptr);
 }
@@ -352,7 +362,7 @@ void updateLoopTask(void *)
     while (true)
     {
         ArduinoOTA.handle();
-        vTaskDelay(5);
+        delay(5);
     }
     vTaskDelete(nullptr);
 }
@@ -362,7 +372,7 @@ void firebaseLoopTask(void *)
     LOG_T("begin");
     while (true)
     {
-        vTaskDelay(50);
+        delay(500);
         if (!firebaseClient.getError())
             if (firebaseClient.consumeStreamIfAvailable())
             {
@@ -373,7 +383,9 @@ void firebaseLoopTask(void *)
                 for (int i = 1; i <= timesTryFirebase; i++)
                 {
                     LOG_D("Attempt %d/%d", i, timesTryFirebase);
+                    xSemaphoreTake(scheduleStringMutex, portMAX_DELAY);
                     firebaseClient.getJson("/Schedules", scheduleString);
+                    xSemaphoreGive(scheduleStringMutex);
                     if (!firebaseClient.getError())
                         break;
                 }
@@ -425,7 +437,7 @@ void uiLoopTask(void *)
             pdFALSE,
             ULONG_MAX,
             &notificationValue,
-            10); // wait maximum 10 ticks so that we update the display around every 100 ms
+            100); // wait maximum 100 ticks (100 ms)
         if (result == pdTRUE)
         {
             Button pressed = static_cast<Button>(notificationValue);
@@ -438,6 +450,41 @@ void uiLoopTask(void *)
     unsubscribeFromButtonEvents();
     vTaskDelete(nullptr);
 }
+
+void sensorLoopTask(void *)
+{
+    LOG_T("begin");
+    lastTemperatureUpdate = xTaskGetTickCount();
+    while (true)
+    {
+        LOG_T("Updating temperature and humidity");
+        auto[temp, hum] = dht.getTempAndHumidity();
+        bool newSensorWorking = (dht.getStatus() == DHTesp::ERROR_NONE);
+        xSemaphoreTake(errorsMutex, portMAX_DELAY);
+        xSemaphoreTake(temperatureHumidityMutex, portMAX_DELAY);
+        sensorWorking = newSensorWorking;
+        if (newSensorWorking)
+        {
+            temperature = temp;
+            humidity = hum;
+            LOG_D("Temperature: %.1f, humidity: %d", temperature, humidity);
+        }
+        else
+        {
+            temperature = NAN;
+            humidity = -1;
+            LOG_D("Error reading sensor");
+        }
+        xSemaphoreGive(temperatureHumidityMutex);
+        xSemaphoreGive(errorsMutex);
+
+        vTaskDelayUntil(&lastTemperatureUpdate, pdMS_TO_TICKS(intervalUpdateTemperature));
+    }
+    vTaskDelete(nullptr);
+}
+
+
+/* Startup Menu */
 
 void showStartupMenu()
 {
@@ -873,15 +920,10 @@ void displayErrors(int cursorX, int cursorY)
             display.write(' ');
         }
     }
-    if (!tempWorking)
-    {
-        display.print(displayErrorTemperatureString);
-        display.write(' ');
-    }
 
-    if (!humWorking)
+    if (!sensorWorking)
     {
-        display.print(displayErrorHumidityString);
+        display.print(displayErrorSensorString);
         display.write(' ');
     }
     xSemaphoreGive(errorsMutex);

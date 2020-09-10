@@ -60,5 +60,4 @@ const char displayClockFormatString[]          = "%.2d:%.2d";                   
 const char displayErrorWifiString[]            = "!W";
 const char displayErrorNTPString[]             = "!N";
 const char displayErrorFirebaseString[]        = "!F";
-const char displayErrorTemperatureString[]     = "!T";
-const char displayErrorHumidityString[]        = "!H";
+const char displayErrorSensorString[]          = "!S";
