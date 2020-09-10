@@ -31,14 +31,10 @@ SemaphoreHandle_t heaterStateMutex;
 String scheduleString;
 SemaphoreHandle_t scheduleStringMutex;
 
-bool wifiWorking = true;
-bool ntpWorking  = true;
-bool sensorWorking = true;
-SemaphoreHandle_t errorsMutex;
-
-float temperature = NAN;
-int   humidity    = -1;
-SemaphoreHandle_t temperatureHumidityMutex;
+float   temperature     = NAN;
+int     humidity        = -1;
+uint8_t dhtReachability = 0;
+SemaphoreHandle_t sensorValuesMutex;
 
 unsigned long          lastRetryErrors       = 0;
 TickType_t             lastTemperatureUpdate = 0;
@@ -118,8 +114,7 @@ extern "C" void app_main()
     initArduino();
     LOG_INIT();
     temporaryScheduleMutex = xSemaphoreCreateMutex();
-    errorsMutex = xSemaphoreCreateMutex();
-    temperatureHumidityMutex = xSemaphoreCreateMutex();
+    sensorValuesMutex = xSemaphoreCreateMutex();
     scheduleStringMutex = xSemaphoreCreateMutex();
     heaterStateMutex = xSemaphoreCreateMutex();
     // stopping the heater right at startup
@@ -146,6 +141,7 @@ void normalOperationTask(void *)
     dht.setup(pinDHT, dhtType);
     LOG_D("Started DHT sensor");
     simpleDisplay(waitingForWifiString);
+    bool wifiWorking = true;
     if (!connectSTAMode())
     {
         LOG_D("Error connecting to Wifi");
@@ -167,7 +163,6 @@ void normalOperationTask(void *)
         if ((sntp_getreachability(0) | sntp_getreachability(1) | sntp_getreachability(2)) == 0)
         {
             LOG_D("Couldn't get NTP time");
-            ntpWorking = false;
             LOG_D("Entering Manual Time Setup");
             simpleDisplay(errorNTPString);
             delay(3000);
@@ -186,8 +181,6 @@ void normalOperationTask(void *)
     }
     else
     {
-        LOG_D("Bypassed getting NTP time");
-        ntpWorking = false;
         LOG_D("Bypassed initializing Firebase stream");
         firebaseClient.setError(true);
         LOG_D("Entering Manual Time Setup");
@@ -403,18 +396,13 @@ void firebaseLoopTask(void *)
         {
             lastRetryErrors = millis();
             LOG_D("Trying to fix errors");
-            bool newWifiWorking = WiFi.isConnected();
-            if (!newWifiWorking)
+            if (!WiFi.isConnected())
             {
                 LOG_T("Disconnecting Wifi and trying to reconnect");
                 WiFi.disconnect(true);
-                newWifiWorking = connectSTAMode();
+                connectSTAMode();
             }
-            xSemaphoreTake(errorsMutex, portMAX_DELAY);
-            wifiWorking = newWifiWorking;
-            ntpWorking = (sntp_getreachability(0) | sntp_getreachability(1) | sntp_getreachability(2)) != 0;
-            xSemaphoreGive(errorsMutex);
-            if (firebaseClient.getError() && newWifiWorking)
+            if (firebaseClient.getError() && WiFi.isConnected())
             {
                 LOG_T("Initializing Firebase stream");
                 firebaseClient.initializeStream("/Schedules");
@@ -459,24 +447,25 @@ void sensorLoopTask(void *)
     {
         LOG_T("Updating temperature and humidity");
         auto[temp, hum] = dht.getTempAndHumidity();
-        bool newSensorWorking = (dht.getStatus() == DHTesp::ERROR_NONE);
-        xSemaphoreTake(errorsMutex, portMAX_DELAY);
-        xSemaphoreTake(temperatureHumidityMutex, portMAX_DELAY);
-        sensorWorking = newSensorWorking;
-        if (newSensorWorking)
+        xSemaphoreTake(sensorValuesMutex, portMAX_DELAY);
+        dhtReachability <<= 1;
+        if (dht.getStatus() == DHTesp::ERROR_NONE)
         {
             temperature = temp;
             humidity = hum;
-            LOG_D("Temperature: %.1f, humidity: %d", temperature, humidity);
+            dhtReachability |= 1;
+            LOG_D("Temperature: %.1f, humidity: %d, reachability: %hho", temperature, humidity, dhtReachability);
         }
         else
         {
-            temperature = NAN;
-            humidity = -1;
-            LOG_D("Error reading sensor");
+            LOG_D("Error reading sensor, reachability: %hho", dhtReachability);
+            if (dhtReachability == 0)
+            {
+                temperature = NAN;
+                humidity = -1;
+            }
         }
-        xSemaphoreGive(temperatureHumidityMutex);
-        xSemaphoreGive(errorsMutex);
+        xSemaphoreGive(sensorValuesMutex);
 
         vTaskDelayUntil(&lastTemperatureUpdate, pdMS_TO_TICKS(intervalUpdateTemperature));
     }
@@ -885,10 +874,10 @@ void updateDisplay()
     localtime_r(&now, &tmnow);
     displayDate(tmnow.tm_mday, tmnow.tm_mon + 1, tmnow.tm_year + 1900, tmnow.tm_wday, 3, 32);
     displayClock(tmnow.tm_hour, tmnow.tm_min, 42, 20);
-    xSemaphoreTake(temperatureHumidityMutex, portMAX_DELAY);
+    xSemaphoreTake(sensorValuesMutex, portMAX_DELAY);
     displayTemp(temperature, 48, 32);
     displayHumidity(humidity, 3, 18);
-    xSemaphoreGive(temperatureHumidityMutex);
+    xSemaphoreGive(sensorValuesMutex);
     displayFlame(flame, 75, 0, 8, 12); // the last two arguments are the width and the height of the flame icon
     displayErrors(0, 0);
     display.display();
@@ -897,9 +886,8 @@ void updateDisplay()
 // cursorX and cursorY are the location of the top left corner
 void displayErrors(int cursorX, int cursorY)
 {
-    xSemaphoreTake(errorsMutex, portMAX_DELAY);
     display.setCursor(cursorX, cursorY);
-    if (!wifiWorking)
+    if (!WiFi.isConnected())
     {
         // error with wifi, no need to check if firebase and ntp work because they don't
         // also no need to display ntp and firebase errors, just wifi error
@@ -908,7 +896,7 @@ void displayErrors(int cursorX, int cursorY)
     }
     else
     {
-        if (!ntpWorking)
+        if ((sntp_getreachability(0) | sntp_getreachability(1) | sntp_getreachability(2)) == 0)
         {
             display.print(displayErrorNTPString);
             display.write(' ');
@@ -921,12 +909,11 @@ void displayErrors(int cursorX, int cursorY)
         }
     }
 
-    if (!sensorWorking)
+    if (dhtReachability == 0)
     {
         display.print(displayErrorSensorString);
         display.write(' ');
     }
-    xSemaphoreGive(errorsMutex);
 }
 
 // cursorX and cursorY are the location of the top left corner
