@@ -6,6 +6,7 @@
 #include <ArduinoOTA.h>
 #include <lwip/apps/sntp.h>
 #include <DHTesp.h>
+#include <ArduinoJson.h>
 
 #include "string_consts.h"
 #include "settings.h"
@@ -59,6 +60,7 @@ TaskHandle_t firebaseTaskHandle;
 TaskHandle_t uiTaskHandle;
 TaskHandle_t buttonSubscribedTaskHandle;
 TaskHandle_t sensorTaskHandle;
+TaskHandle_t evaluateSchedulesTaskHandle;
 
 // Tasks
 void normalOperationTask(void *);
@@ -69,6 +71,7 @@ void updateLoopTask(void *);
 void firebaseLoopTask(void *);
 void uiLoopTask(void *);
 void sensorLoopTask(void *);
+void evaluateSchedulesLoopTask(void *);
 
 // General purpose
 void sendSignalToHeater(bool signal);
@@ -104,6 +107,10 @@ void displayErrors(int cursorX, int cursorY);
 // Temporary Schedule
 void temporaryScheduleSetup();
 void temporaryScheduleHelper(float temp, int duration, int option, int sel);
+
+// Schedule evaluation helpers
+bool cmpTempSetTemp(float temp, float setTemp);
+bool scheduleIsActive(JsonObjectConst schedule);
 
 // ISRs
 void buttonISR(void *button);
@@ -227,6 +234,15 @@ void normalOperationTask(void *)
         nullptr,
         1,
         &sensorTaskHandle,
+        0);
+
+    xTaskCreatePinnedToCore(
+        evaluateSchedulesLoopTask,
+        "evaluateSchedulesLoopTask",
+        3096, 
+        nullptr,
+        2,
+        &evaluateSchedulesTaskHandle,
         0);
 
     vTaskDelete(nullptr);
@@ -385,6 +401,8 @@ void firebaseLoopTask(void *)
                 if (!firebaseClient.getError())
                 {
                     LOG_D("Got new schedules");
+
+                    xTaskNotifyGive(evaluateSchedulesTaskHandle);
                 }
                 else
                 {
@@ -466,8 +484,130 @@ void sensorLoopTask(void *)
             }
         }
         xSemaphoreGive(sensorValuesMutex);
+        xTaskNotifyGive(evaluateSchedulesTaskHandle);
 
         vTaskDelayUntil(&lastTemperatureUpdate, pdMS_TO_TICKS(intervalUpdateTemperature));
+    }
+    vTaskDelete(nullptr);
+}
+
+void evaluateSchedulesLoopTask(void *)
+{
+    LOG_T("begin");
+    while (true)
+    {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        xSemaphoreTake(sensorValuesMutex, portMAX_DELAY);
+        if (isnan(temperature))
+        {
+            xSemaphoreGive(sensorValuesMutex);
+            sendSignalToHeater(false);
+            continue;
+        }
+        xSemaphoreTake(temporaryScheduleMutex, portMAX_DELAY);
+        if (temporaryScheduleActive)
+        {
+            LOG_D("Temporary schedule is active");
+            time_t now;
+            time(&now);
+            if (temporaryScheduleEnd == -1 || now < temporaryScheduleEnd)
+            {
+                bool signal = cmpTempSetTemp(temperature, temporaryScheduleTemp);
+                sendSignalToHeater(signal);
+            }
+            else
+            {
+                LOG_D("Temporary schedule expired");
+                temporaryScheduleActive = false;
+            }
+            xSemaphoreGive(sensorValuesMutex);
+            xSemaphoreGive(temporaryScheduleMutex);
+        }
+        else
+        {
+            xSemaphoreGive(temporaryScheduleMutex);
+            float temperatureCopy = temperature;
+            xSemaphoreGive(sensorValuesMutex);
+            LOG_D("Evaluating schedules");
+            xSemaphoreTake(scheduleStringMutex, portMAX_DELAY);
+            // we find the active schedule from each category (daily, weekly, nonrepeating) if it exists
+            // in the end we give priority to the nonrepeating one, then to the weekly, then daily
+            bool onceScheduleActive = false, weeklyScheduleActive = false, dailyScheduleActive = false;
+            bool onceScheduleSignal = false, weeklyScheduleSignal = false, dailyScheduleSignal = false;
+            // we find the first occurence of the character '{', excluding the first character; this is the beggining of the first schedule object
+            int beginIndex = scheduleString.indexOf('{', 1);
+            while (beginIndex != -1)
+            {
+                // we find the next occurence of '}', starting at beginIndex; this is the end of the first schedule object
+                int endIndex = scheduleString.indexOf('}', beginIndex + 1);
+                StaticJsonDocument<400> doc;
+                auto error = deserializeJson(doc, scheduleString.c_str() + beginIndex, endIndex - beginIndex + 1);
+                if (error)
+                {
+                    LOG_D("Invalid schedule");
+                }
+                else
+                {
+                    auto schedule = doc.as<JsonObjectConst>();
+                    if (scheduleIsActive(schedule))
+                    {
+                        float setTemp = schedule["setTemp"];
+                        const char *repeat = schedule["repeat"];
+                        bool signal = cmpTempSetTemp(temperatureCopy, setTemp);
+
+                        // if a one-time schedule is active, then it has the highest priority, so we stop the loop after it
+                        if (strcmp(repeat, "Once") == 0)
+                        {
+                            onceScheduleActive = true;
+                            onceScheduleSignal = signal;
+                            break;
+                        }
+                        
+                        if (strcmp(repeat, "Weekly") == 0)
+                        {
+                            weeklyScheduleActive = true;
+                            weeklyScheduleSignal = signal;
+                        } 
+                        else if (strcmp(repeat, "Daily") == 0)
+                        {
+                            dailyScheduleActive = true;
+                            dailyScheduleSignal = signal;
+                        }
+                    }
+                }
+                beginIndex = scheduleString.indexOf('{', endIndex + 1);
+            }
+            xSemaphoreGive(scheduleStringMutex);
+
+            // if there was a nonrepeating schedule active, we pass its signal on
+            if (onceScheduleActive)
+            {
+                LOG_D("Following a one time schedule");
+                sendSignalToHeater(onceScheduleSignal);
+                continue;
+            }
+
+            // otherwise, if there was a weekly schedule active, we pass its signal on
+            if (weeklyScheduleActive)
+            {
+                LOG_D("Following a weekly schedule");
+                sendSignalToHeater(weeklyScheduleSignal);
+                continue;
+            }
+
+            // otherwise, if there was a daily schedule active, we pass its signal on
+            if (dailyScheduleActive)
+            {
+                LOG_D("Following a daily schedule");
+                sendSignalToHeater(dailyScheduleSignal);
+                continue;
+            }
+
+            // if there was no schedule active, we don't turn on the heater
+            LOG_D("No schedule is active");
+            sendSignalToHeater(false);
+        }
     }
     vTaskDelete(nullptr);
 }
@@ -742,6 +882,7 @@ void temporaryScheduleSetup()
             }
         }
         LOG_D("Saved temporary schedule");
+        xTaskNotifyGive(evaluateSchedulesTaskHandle);
         break;
     case 1:
         LOG_D("Return without changing anything");
@@ -749,6 +890,7 @@ void temporaryScheduleSetup()
     case 2:
         temporaryScheduleActive = false;
         LOG_D("Deleted temporary schedule");
+        xTaskNotifyGive(evaluateSchedulesTaskHandle);
         break;
     }
     xSemaphoreGive(temporaryScheduleMutex);
@@ -1332,6 +1474,88 @@ void sendSignalToHeater(bool signal)
     heaterState = signal;
     xSemaphoreGive(heaterStateMutex);
     digitalWrite(pinHeater, signal);
+}
+
+
+/* Schedule evaluation helpers */
+
+bool cmpTempSetTemp(float temp, float setTemp)
+{
+    xSemaphoreTake(heaterStateMutex, portMAX_DELAY);
+    bool heaterStateCopy = heaterState;
+    xSemaphoreGive(heaterStateMutex);
+    if (heaterStateCopy)
+    {
+        return temp < setTemp + tempThreshold;
+    }
+    return temp <= setTemp - tempThreshold;
+}
+
+bool scheduleIsActive(JsonObjectConst schedule)
+{
+    const char *repeat = schedule["repeat"];
+    
+    if (strcmp(repeat, "Once") == 0)
+    {
+        LOG_D("Once");
+        tm starttm, endtm;
+        starttm.tm_sec = 0;
+        starttm.tm_min = schedule["sM"];
+        starttm.tm_hour = schedule["sH"];
+        starttm.tm_mday = schedule["sD"];
+        starttm.tm_mon = schedule["sMth"];
+        starttm.tm_year = schedule["sY"].as<int>() - 1900;
+        starttm.tm_isdst = -1;
+        endtm.tm_sec = 0;
+        endtm.tm_min = schedule["eM"];
+        endtm.tm_hour = schedule["eH"];
+        endtm.tm_mday = schedule["eD"];
+        endtm.tm_mon = schedule["eMth"];
+        endtm.tm_year = schedule["eY"].as<int>() - 1900;
+        endtm.tm_isdst = -1;
+        time_t startTime = mktime(&starttm);
+        time_t endTime = mktime(&endtm);
+        time_t now;
+        time(&now);
+        bool active = startTime <= now && now < endTime;
+        LOG_D("%s", active ? "Active" : "Not active");
+		return active;
+    }
+
+    int startTime = schedule["sH"].as<int>() * 60 + schedule["sM"].as<int>();
+    int endTime = schedule["eH"].as<int>() * 60 + schedule["eM"].as<int>();
+    time_t now;
+    tm tmnow;
+    time(&now);
+    localtime_r(&now, &tmnow);
+    int currentTime = tmnow.tm_hour * 60 + tmnow.tm_min;
+
+    if (strcmp(repeat, "Daily") == 0)
+    {
+        LOG_D("Daily");
+        bool active = startTime <= currentTime && currentTime < endTime;
+        LOG_D("%s", active ? "Active" : "Not active");
+		return active;
+    }
+
+    if (strcmp(repeat, "Weekly") == 0)
+    {
+        LOG_D("Weekly");
+        JsonArrayConst weekdays = schedule["weekDays"]; // Sunday is day 1
+        for (int wday : weekdays)
+            if (wday == tmnow.tm_wday + 1)
+            {
+                LOG_T("Active on this weekday");
+                bool active = startTime <= currentTime && currentTime < endTime;
+                LOG_D("%s", active ? "Active" : "Not active");
+                return active;
+            }
+        LOG_T("Not active on this weekday");
+        LOG_D("Not active");
+        return false;
+    }
+    LOG_D("Schedule repeat is invalid");
+    return false;
 }
 
 
