@@ -535,11 +535,11 @@ void evaluateSchedulesLoopTask(void *)
             // in the end we give priority to the nonrepeating one, then to the weekly, then daily
             bool onceScheduleActive = false, weeklyScheduleActive = false, dailyScheduleActive = false;
             bool onceScheduleSignal = false, weeklyScheduleSignal = false, dailyScheduleSignal = false;
-            // we find the first occurence of the character '{', excluding the first character; this is the beggining of the first schedule object
+            // we find the first occurrence of the character '{', excluding the first character; this is the beggining of the first schedule object
             int beginIndex = scheduleString.indexOf('{', 1);
             while (beginIndex != -1)
             {
-                // we find the next occurence of '}', starting at beginIndex; this is the end of the first schedule object
+                // we find the next occurrence of '}', starting at beginIndex; this is the end of the first schedule object
                 int endIndex = scheduleString.indexOf('}', beginIndex + 1);
                 StaticJsonDocument<400> doc;
                 auto error = deserializeJson(doc, scheduleString.c_str() + beginIndex, endIndex - beginIndex + 1);

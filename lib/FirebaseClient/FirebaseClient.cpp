@@ -173,7 +173,7 @@ void FirebaseClient::setJson(const char *path, const String &data)
         setError(true);
         return;
     }
-    LOG_D("The object was set succesfully");
+    LOG_D("The object was set successfully");
     requestHTTPClient.end();
     setError(false);
 }
@@ -192,7 +192,7 @@ void FirebaseClient::pushJson(const char *path, const String &data)
         setError(true);
         return;
     }
-    LOG_D("The object was pushed succesfully");
+    LOG_D("The object was pushed successfully");
     requestHTTPClient.end();
     setError(false);
 }
