@@ -10,7 +10,6 @@
 
 #include "string_consts.h"
 #include "settings.h"
-#include "firebase_certificate.h"
 #include "webpage.h"
 #include "FirebaseClient.h"
 #include "Logger.h"
@@ -25,6 +24,7 @@ enum class Button
     Down
 };
 
+extern const char firebaseRootCA[] asm("_binary_firebaseio_root_ca_pem_start");
 
 bool heaterState = false;
 SemaphoreHandle_t heaterStateMutex;
