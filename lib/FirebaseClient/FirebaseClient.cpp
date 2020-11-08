@@ -10,6 +10,7 @@ FirebaseClient::FirebaseClient(const char *_rootCA, const char *_firebaseURL, co
 {
     streamingClientSecure.setCACert(rootCA);
     requestClientSecure.setCACert(rootCA);
+    errorMutex = xSemaphoreCreateMutex();
 }
 
 bool FirebaseClient::consumeStreamIfAvailable()
@@ -124,12 +125,17 @@ String FirebaseClient::makeURL(const char *path)
 
 bool FirebaseClient::getError()
 {
-    return error;
+    xSemaphoreTake(errorMutex, portMAX_DELAY);
+    bool errorCopy = error;
+    xSemaphoreGive(errorMutex);
+    return errorCopy;
 }
 
 void FirebaseClient::setError(bool value)
 {
+    xSemaphoreTake(errorMutex, portMAX_DELAY);
     error = value;
+    xSemaphoreGive(errorMutex);
 }
 
 void FirebaseClient::getJson(const char *path, String &result)
@@ -167,7 +173,7 @@ void FirebaseClient::setJson(const char *path, const String &data)
         setError(true);
         return;
     }
-    LOG_D("The object was set succesfully");
+    LOG_D("The object was set successfully");
     requestHTTPClient.end();
     setError(false);
 }
@@ -186,7 +192,7 @@ void FirebaseClient::pushJson(const char *path, const String &data)
         setError(true);
         return;
     }
-    LOG_D("The object was pushed succesfully");
+    LOG_D("The object was pushed successfully");
     requestHTTPClient.end();
     setError(false);
 }

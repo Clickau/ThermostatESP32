@@ -17,21 +17,21 @@ public:
      */
     FirebaseClient(const char *_rootCA, const char *_url, const char *_secret);
 
-	/* checks if anything changed in the database
-	 * if it receives updates on the stream, it checks if the event is of type 'put', and if so, it means something in the database changed, so it clears the stream and returns true
-	 * otherwise, it returns false
+    /* checks if anything changed in the database
+     * if it receives updates on the stream, it checks if the event is of type 'put', and if so, it means something in the database changed, so it clears the stream and returns true
+     * otherwise, it returns false
      */
-	bool consumeStreamIfAvailable();
+    bool consumeStreamIfAvailable();
 
     /*
      * initialize a stream that will receive a notification when something changes in the database
      * streamingPath is the part after the url (and without .json) of the path to the json blob that contains the data we want to monitor
      * for example if we want to monitor example.firebaseio.com/Data/Schedules.json, streamingPath should be "Data/Schedules" or "/Data/Schedules"
      */
-	void initializeStream(const char *streamingPath);
+    void initializeStream(const char *streamingPath);
 
     // closes the current streaming connection
-	void closeStream();
+    void closeStream();
 
     // it is public because we might want to set the error if wifi isn't working
     void setError(bool value);
@@ -56,7 +56,7 @@ private:
     const char *firebaseURL;
     const char *secret;
 
-	bool streamConnected;
+    bool streamConnected;
     HTTPClient streamingHTTPClient;
     WiFiClientSecure streamingClientSecure;
 
@@ -64,6 +64,8 @@ private:
     WiFiClientSecure requestClientSecure;
 
     String makeURL(const char *path);
+
+    SemaphoreHandle_t errorMutex;
 };
 
 #endif

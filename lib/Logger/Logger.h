@@ -7,6 +7,8 @@
 #define LOGGER_LEVEL_DEBUG 3
 #define LOGGER_LEVEL_TRACE 4
 
+inline SemaphoreHandle_t loggerMutex;
+
 #define INTERNAL_LOG_TIMESTAMP()                  \
     Serial.print(millis());                       \
     Serial.print(' ');
@@ -25,38 +27,47 @@
 
 #define INTERNAL_LOG_MESSAGE(format, ...)         \
     Serial.printf(format, ##__VA_ARGS__);         \
-    Serial.println()
+    Serial.println();
 
 #define INTERNAL_LOG_INIT()                       \
+    loggerMutex = xSemaphoreCreateMutex();        \
     Serial.begin(115200);
 
 #define INTERNAL_LOG_E(format, ...)               \
+    xSemaphoreTake(loggerMutex, portMAX_DELAY);   \
     INTERNAL_LOG_TIMESTAMP()                      \
     INTERNAL_LOG_SEVERITY("ERR")                  \
     INTERNAL_LOG_CORE()                           \
     INTERNAL_LOG_FUNCTION()                       \
-    INTERNAL_LOG_MESSAGE(format, ##__VA_ARGS__)
+    INTERNAL_LOG_MESSAGE(format, ##__VA_ARGS__)   \
+    xSemaphoreGive(loggerMutex)
 
 #define INTERNAL_LOG_W(format, ...)               \
+    xSemaphoreTake(loggerMutex, portMAX_DELAY);   \
     INTERNAL_LOG_TIMESTAMP()                      \
     INTERNAL_LOG_SEVERITY("WRN")                  \
     INTERNAL_LOG_CORE()                           \
     INTERNAL_LOG_FUNCTION()                       \
-    INTERNAL_LOG_MESSAGE(format, ##__VA_ARGS__)
+    INTERNAL_LOG_MESSAGE(format, ##__VA_ARGS__)   \
+    xSemaphoreGive(loggerMutex)
 
 #define INTERNAL_LOG_D(format, ...)               \
+    xSemaphoreTake(loggerMutex, portMAX_DELAY);   \
     INTERNAL_LOG_TIMESTAMP()                      \
     INTERNAL_LOG_SEVERITY("DBG")                  \
     INTERNAL_LOG_CORE()                           \
     INTERNAL_LOG_FUNCTION()                       \
-    INTERNAL_LOG_MESSAGE(format, ##__VA_ARGS__)
+    INTERNAL_LOG_MESSAGE(format, ##__VA_ARGS__)   \
+    xSemaphoreGive(loggerMutex)
 
 #define INTERNAL_LOG_T(format, ...)               \
+    xSemaphoreTake(loggerMutex, portMAX_DELAY);   \
     INTERNAL_LOG_TIMESTAMP()                      \
     INTERNAL_LOG_SEVERITY("TRC")                  \
     INTERNAL_LOG_CORE()                           \
     INTERNAL_LOG_FUNCTION()                       \
-    INTERNAL_LOG_MESSAGE(format, ##__VA_ARGS__)
+    INTERNAL_LOG_MESSAGE(format, ##__VA_ARGS__)   \
+    xSemaphoreGive(loggerMutex)
 
 #if LOGGER_SELECTED_LEVEL == LOGGER_LEVEL_DISABLED
 
