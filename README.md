@@ -5,15 +5,14 @@ This project aims to provide a thermostat that can be controlled remotely. It se
 
 ## Setup
 <ul>
-<li>Install VS Code and the PlatformIO extension</li>
+<li>Install ESP-IDF or use VS Code with the ESP-IDF extension</li>
 <li>Clone the project</li>
-<li>Open the project in PlatformIO</li>
 <li>Configure the project (see below)</li>
 <li>Upload to board</li>
 </ul>
 
 ## Configuration
-All basic configuration can be done by editing the file include/settings.h.
+All basic configuration can be done by editing the file main/include/settings.h.
 
 ### Mandatory configuration
 <ul>

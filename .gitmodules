@@ -1,0 +1,18 @@
+[submodule "components/ArduinoJson/ArduinoJson"]
+	path = components/ArduinoJson/ArduinoJson
+	url = https://github.com/bblanchon/ArduinoJson.git
+[submodule "components/Adafruit_BusIO/Adafruit_BusIO"]
+	path = components/Adafruit_BusIO/Adafruit_BusIO
+	url = https://github.com/adafruit/Adafruit_BusIO.git
+[submodule "components/Adafruit_GFX_Library/Adafruit_GFX_Library"]
+	path = components/Adafruit_GFX_Library/Adafruit_GFX_Library
+	url = https://github.com/adafruit/Adafruit-GFX-Library.git
+[submodule "components/Adafruit_PCD8544_Nokia_5110_LCD_library/Adafruit_PCD8544_Nokia_5110_LCD_library"]
+	path = components/Adafruit_PCD8544_Nokia_5110_LCD_library/Adafruit_PCD8544_Nokia_5110_LCD_library
+	url = https://github.com/adafruit/Adafruit-PCD8544-Nokia-5110-LCD-library.git
+[submodule "components/DHTesp/DHTesp"]
+	path = components/DHTesp/DHTesp
+	url = https://github.com/beegee-tokyo/DHTesp.git
+[submodule "components/arduino"]
+	path = components/arduino
+	url = https://github.com/espressif/arduino-esp32.git
