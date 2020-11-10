@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#include <WiFi.h>
 #include <Adafruit_PCD8544.h>
 #include <WebServer.h>
 #include <SPIFFS.h>
@@ -7,6 +6,10 @@
 #include <lwip/apps/sntp.h>
 #include <DHTesp.h>
 #include <ArduinoJson.h>
+#include <tcpip_adapter.h>
+#include <esp_event.h>
+#include <esp_wifi.h>
+#include <cstring>
 
 #include "string_consts.h"
 #include "settings.h"
@@ -25,6 +28,9 @@ enum class Button
 };
 
 extern const char firebaseRootCA[] asm("_binary_firebaseio_root_ca_pem_start");
+
+volatile bool wifiWorking = false;
+SemaphoreHandle_t wifiWorkingMutex;
 
 bool heaterState = false;
 SemaphoreHandle_t heaterStateMutex;
@@ -49,7 +55,7 @@ SemaphoreHandle_t temporaryScheduleMutex;
 
 
 Adafruit_PCD8544 display{pinDC, pinCS, pinRST};
-FirebaseClient firebaseClient{firebaseRootCA, firebasePath, firebaseSecret};
+FirebaseClient firebaseClient{firebaseRootCA, firebasePath, firebaseSecret, "/Schedules.json"};
 WebServer server{80};
 DHTesp dht;
 
@@ -115,6 +121,9 @@ bool scheduleIsActive(JsonObjectConst schedule);
 // ISRs
 void buttonISR(void *button);
 
+// Event handlers
+void wifi_event_handler(void *, esp_event_base_t base, int32_t id, void *);
+
 
 extern "C" void app_main()
 {
@@ -124,6 +133,7 @@ extern "C" void app_main()
     sensorValuesMutex = xSemaphoreCreateMutex();
     scheduleStringMutex = xSemaphoreCreateMutex();
     heaterStateMutex = xSemaphoreCreateMutex();
+    wifiWorkingMutex = xSemaphoreCreateMutex();
     // stopping the heater right at startup
     pinMode(pinHeater, OUTPUT);
     pinMode(pinUp, INPUT_PULLDOWN);
@@ -184,7 +194,7 @@ void normalOperationTask(void *)
 
         simpleDisplay(waitingForFirebaseString);
         LOG_D("Initializing Firebase stream");
-        firebaseClient.initializeStream("/Schedules");
+        firebaseClient.initializeStream();
     }
     else
     {
@@ -393,7 +403,7 @@ void firebaseLoopTask(void *)
                 {
                     LOG_D("Attempt %d/%d", i, timesTryFirebase);
                     xSemaphoreTake(scheduleStringMutex, portMAX_DELAY);
-                    firebaseClient.getJson("/Schedules", scheduleString);
+                    firebaseClient.getJson("/Schedules.json", scheduleString);
                     xSemaphoreGive(scheduleStringMutex);
                     if (!firebaseClient.getError())
                         break;
@@ -414,16 +424,13 @@ void firebaseLoopTask(void *)
         {
             lastRetryErrors = millis();
             LOG_D("Trying to fix errors");
-            if (!WiFi.isConnected())
-            {
-                LOG_T("Disconnecting Wifi and trying to reconnect");
-                WiFi.disconnect(true);
-                connectSTAMode();
-            }
-            if (firebaseClient.getError() && WiFi.isConnected())
+            xSemaphoreTake(wifiWorkingMutex, portMAX_DELAY);
+            bool wifiWorkingCopy = wifiWorking;
+            xSemaphoreGive(wifiWorkingMutex);
+            if (firebaseClient.getError() && wifiWorkingCopy)
             {
                 LOG_T("Initializing Firebase stream");
-                firebaseClient.initializeStream("/Schedules");
+                firebaseClient.initializeStream();
             }
         }
     }
@@ -1029,7 +1036,10 @@ void updateDisplay()
 void displayErrors(int cursorX, int cursorY)
 {
     display.setCursor(cursorX, cursorY);
-    if (!WiFi.isConnected())
+    xSemaphoreTake(wifiWorkingMutex, portMAX_DELAY);
+    bool wifiWorkingCopy = wifiWorking;
+    xSemaphoreGive(wifiWorkingMutex);
+    if (!wifiWorkingCopy)
     {
         // error with wifi, no need to check if firebase and ntp work because they don't
         // also no need to display ntp and firebase errors, just wifi error
@@ -1307,7 +1317,7 @@ void setupWifiDisplayInfo()
 void setupWifiHandleRoot()
 {
     LOG_T("begin");
-    server.send(HTTP_CODE_OK, "text/html", setupWifiPage);
+    server.send(200, "text/html", setupWifiPage);
 }
 
 // function called when a client sends a POST request to the server, at location /post, stores the SSID and password from the request in SPIFFS
@@ -1316,11 +1326,11 @@ void setupWifiHandlePost()
     LOG_T("begin");
     if (!server.hasArg("ssid") || !server.hasArg("password"))
     {
-        server.send(HTTP_CODE_BAD_REQUEST, "text/plain", serverNotAllArgsPresentString);
+        server.send(400, "text/plain", serverNotAllArgsPresentString);
         LOG_D("Not all arguments were present in POST request");
         return;
     }
-    server.send(HTTP_CODE_OK, "text/plain", serverReceivedArgsString);
+    server.send(200, "text/plain", serverReceivedArgsString);
     String ssid = server.arg("ssid");
     String password = server.arg("password");
     LOG_D("Received SSID and password");
@@ -1396,21 +1406,47 @@ bool connectSTAMode()
     String ssid;
     String password;
     getCredentials(ssid, password);
-    WiFi.mode(WIFI_STA);
-    WiFi.setAutoReconnect(true);
-    WiFi.begin(ssid.c_str(), password.c_str());
-    unsigned long previousTime = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - previousTime < waitingTimeConnectWifi)
+
+    tcpip_adapter_init();
+    ESP_ERROR_CHECK(esp_event_loop_init(nullptr, nullptr));
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler, nullptr));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event_handler, nullptr));
+    wifi_init_config_t init_cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&init_cfg));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    wifi_config_t wifi_config = {};
+    wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    wifi_config.sta.pmf_cfg.capable = true;
+    wifi_config.sta.pmf_cfg.required = false;
+    strcpy((char *)wifi_config.sta.ssid, ssid.c_str());
+    strcpy((char *)wifi_config.sta.password, password.c_str());
+    
+    ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    // wait for got ip event or timeout
+    bool success = false;
+    unsigned long lastMillis = millis();
+    while (true)
     {
+        xSemaphoreTake(wifiWorkingMutex, portMAX_DELAY);
+        success = wifiWorking;
+        xSemaphoreGive(wifiWorkingMutex);
+        if (success || millis() - lastMillis > waitingTimeConnectWifi)
+            break;
         delay(100);
     }
-    if (WiFi.status() != WL_CONNECTED)
+    
+    if (success)
+    {
+        LOG_D("Connected");
+        return true;
+    }
+    else
     {
         LOG_D("Failed to connect");
         return false;
     }
-    LOG_D("Connected");
-    return true;
 }
 
 // gets the Wifi login credentials from the SPIFFS
@@ -1519,7 +1555,7 @@ bool scheduleIsActive(JsonObjectConst schedule)
         time(&now);
         bool active = startTime <= now && now < endTime;
         LOG_D("%s", active ? "Active" : "Not active");
-		return active;
+        return active;
     }
 
     int startTime = schedule["sH"].as<int>() * 60 + schedule["sM"].as<int>();
@@ -1535,7 +1571,7 @@ bool scheduleIsActive(JsonObjectConst schedule)
         LOG_D("Daily");
         bool active = startTime <= currentTime && currentTime < endTime;
         LOG_D("%s", active ? "Active" : "Not active");
-		return active;
+        return active;
     }
 
     if (strcmp(repeat, "Weekly") == 0)
@@ -1580,4 +1616,41 @@ void IRAM_ATTR buttonISR(void *button)
         }
     }
     portEXIT_CRITICAL_ISR(&lastButtonPressMux);
+}
+
+
+/* Event handlers */
+
+void wifi_event_handler(void *, esp_event_base_t base, int32_t id, void *)
+{
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START)
+    {
+        LOG_D("Wifi started");
+        esp_err_t err = esp_wifi_connect();
+        if (err != ESP_OK)
+        {
+            LOG_D("esp_wifi_connect error: %s", esp_err_to_name(err));
+            xSemaphoreTake(wifiWorkingMutex, portMAX_DELAY);
+            wifiWorking = false;
+            xSemaphoreGive(wifiWorkingMutex);
+        }
+    }
+    else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED)
+    {
+        xSemaphoreTake(wifiWorkingMutex, portMAX_DELAY);
+        wifiWorking = false;
+        xSemaphoreGive(wifiWorkingMutex);
+        esp_err_t err = esp_wifi_connect();
+        if (err != ESP_OK)
+        {
+            LOG_D("esp_wifi_connect error: %s", esp_err_to_name(err));
+        }
+    }
+    else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP)
+    {
+        LOG_D("Got IP");
+        xSemaphoreTake(wifiWorkingMutex, portMAX_DELAY);
+        wifiWorking = true;
+        xSemaphoreGive(wifiWorkingMutex);
+    }
 }

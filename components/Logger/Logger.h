@@ -1,6 +1,8 @@
 #ifndef LOGGER_H
 #define LOGGER_H
 
+#include <stdio.h>
+
 #define LOGGER_LEVEL_DISABLED 0
 #define LOGGER_LEVEL_ERROR 1
 #define LOGGER_LEVEL_WARN 2
@@ -9,64 +11,36 @@
 
 inline SemaphoreHandle_t loggerMutex;
 
-#define INTERNAL_LOG_TIMESTAMP()                  \
-    Serial.print(millis());                       \
-    Serial.print(' ');
-
-#define INTERNAL_LOG_SEVERITY(severity)           \
-    Serial.print(severity);                       \
-    Serial.print('/');
-
-#define INTERNAL_LOG_CORE()                       \
-    Serial.print(xPortGetCoreID());               \
-    Serial.print('/');
-
-#define INTERNAL_LOG_FUNCTION()                   \
-    Serial.print(__func__);                       \
-    Serial.print(": ");
-
-#define INTERNAL_LOG_MESSAGE(format, ...)         \
-    Serial.printf(format, ##__VA_ARGS__);         \
-    Serial.println();
-
-#define INTERNAL_LOG_INIT()                       \
-    loggerMutex = xSemaphoreCreateMutex();        \
+#define INTERNAL_LOG_INIT()                                                                            \
+    loggerMutex = xSemaphoreCreateMutex();                                                             \
     Serial.begin(115200);
 
-#define INTERNAL_LOG_E(format, ...)               \
-    xSemaphoreTake(loggerMutex, portMAX_DELAY);   \
-    INTERNAL_LOG_TIMESTAMP()                      \
-    INTERNAL_LOG_SEVERITY("ERR")                  \
-    INTERNAL_LOG_CORE()                           \
-    INTERNAL_LOG_FUNCTION()                       \
-    INTERNAL_LOG_MESSAGE(format, ##__VA_ARGS__)   \
+#define INTERNAL_LOG_E(format, ...)                                                                    \
+    xSemaphoreTake(loggerMutex, portMAX_DELAY);                                                        \
+    printf("%llu %s/%u/%s: ", esp_timer_get_time() / 1000ULL, "ERR", xPortGetCoreID(), __func__);      \
+    printf(format, ##__VA_ARGS__);                                                                     \
+    puts("");                                                                                          \
     xSemaphoreGive(loggerMutex)
 
-#define INTERNAL_LOG_W(format, ...)               \
-    xSemaphoreTake(loggerMutex, portMAX_DELAY);   \
-    INTERNAL_LOG_TIMESTAMP()                      \
-    INTERNAL_LOG_SEVERITY("WRN")                  \
-    INTERNAL_LOG_CORE()                           \
-    INTERNAL_LOG_FUNCTION()                       \
-    INTERNAL_LOG_MESSAGE(format, ##__VA_ARGS__)   \
+#define INTERNAL_LOG_W(format, ...)                                                                    \
+    xSemaphoreTake(loggerMutex, portMAX_DELAY);                                                        \
+    printf("%llu %s/%u/%s: ", esp_timer_get_time() / 1000ULL, "WRN", xPortGetCoreID(), __func__);      \
+    printf(format, ##__VA_ARGS__);                                                                     \
+    puts("");                                                                                          \
     xSemaphoreGive(loggerMutex)
 
-#define INTERNAL_LOG_D(format, ...)               \
-    xSemaphoreTake(loggerMutex, portMAX_DELAY);   \
-    INTERNAL_LOG_TIMESTAMP()                      \
-    INTERNAL_LOG_SEVERITY("DBG")                  \
-    INTERNAL_LOG_CORE()                           \
-    INTERNAL_LOG_FUNCTION()                       \
-    INTERNAL_LOG_MESSAGE(format, ##__VA_ARGS__)   \
+#define INTERNAL_LOG_D(format, ...)                                                                    \
+    xSemaphoreTake(loggerMutex, portMAX_DELAY);                                                        \
+    printf("%llu %s/%u/%s: ", esp_timer_get_time() / 1000ULL, "DBG", xPortGetCoreID(), __func__);      \
+    printf(format, ##__VA_ARGS__);                                                                     \
+    puts("");                                                                                          \
     xSemaphoreGive(loggerMutex)
 
-#define INTERNAL_LOG_T(format, ...)               \
-    xSemaphoreTake(loggerMutex, portMAX_DELAY);   \
-    INTERNAL_LOG_TIMESTAMP()                      \
-    INTERNAL_LOG_SEVERITY("TRC")                  \
-    INTERNAL_LOG_CORE()                           \
-    INTERNAL_LOG_FUNCTION()                       \
-    INTERNAL_LOG_MESSAGE(format, ##__VA_ARGS__)   \
+#define INTERNAL_LOG_T(format, ...)                                                                    \
+    xSemaphoreTake(loggerMutex, portMAX_DELAY);                                                        \
+    printf("%llu %s/%u/%s: ", esp_timer_get_time() / 1000ULL, "TRC", xPortGetCoreID(), __func__);      \
+    printf(format, ##__VA_ARGS__);                                                                     \
+    puts("");                                                                                          \
     xSemaphoreGive(loggerMutex)
 
 #if LOGGER_SELECTED_LEVEL == LOGGER_LEVEL_DISABLED
