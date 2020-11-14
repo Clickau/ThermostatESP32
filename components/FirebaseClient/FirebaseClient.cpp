@@ -21,16 +21,134 @@ FirebaseClient::FirebaseClient(const char *_rootCA, const char *_firebaseURL, co
     error(false),
     rootCA(_rootCA),
     firebaseURL(_firebaseURL),
-    streamConnected(false)
+    streamConnected(false),
+    streamingHost(nullptr),
+    streamingPathWithQuery(nullptr)
 {
     errorMutex = xSemaphoreCreateMutex();
     snprintf(query, sizeof(query), "auth=%s", _secret);
-    asprintf(&streaming_request, "GET %s?%s HTTP/1.1\r\nHost: %s\r\nUser-Agent: ThermostatESP32\r\nAccept: text/event-stream\r\n\r\n", _streamingPath, query, _firebaseURL);
+    int ret = asprintf(&streamingPathWithQuery, "%s?%s", _streamingPath, query);
+    if (ret == -1)
+    {
+        LOG_D("Could not allocate streamingPathWithQuery");
+        abort();
+    }
 }
 
 FirebaseClient::~FirebaseClient()
 {
-    free(streaming_request);
+    free(streamingPathWithQuery);
+    free(streamingHost);
+}
+
+bool FirebaseClient::internal_initializeStream(const char *pathWithQuery, const char *location, bool locationIsURL)
+{
+    esp_tls_cfg_t cfg = {};
+    cfg.cacert_pem_buf = (const unsigned char *) rootCA;
+    cfg.cacert_pem_bytes = strlen(rootCA) + 1;
+    cfg.non_block = true;
+    streaming_tls = esp_tls_init();
+    if (!streaming_tls)
+    {
+        LOG_E("esp_tls_init error");
+        return false;
+    }
+    LOG_T("Connecting");
+    if (!location)
+    {
+        // we use the last used host
+        if (!streamingHost)
+        {
+            LOG_D("First initialization must have host");
+            return false;
+        }
+        location = streamingHost;
+        locationIsURL = false;
+    }
+    else
+    {
+        free(streamingHost);
+        streamingHost = strdup(location);
+    }
+    int ret;
+    while ((ret = locationIsURL ?
+        esp_tls_conn_http_new_async(location, &cfg, streaming_tls) 
+        : esp_tls_conn_new_async(location, strlen(location), 443, &cfg, streaming_tls)) == 0)
+    {
+        delay(50);
+    }
+    if (ret != 1)
+    {
+        LOG_D("Connection failed");
+        return false;
+    }
+    LOG_T("Connection established");
+    char *request;
+    size_t hostLength;
+    const char *host = location;
+    if (locationIsURL)
+    {
+        // skip https://
+        host += 8;
+        const char *endHost = strchr(host, '/');
+        if (!endHost)
+        {   
+            LOG_D("Could not find end of host in URL");
+            return false;
+        }
+        hostLength = endHost - host;
+    }
+    else
+    {
+        hostLength = strlen(location);
+    }
+    
+    ret = asprintf(&request, "GET %s HTTP/1.1\r\nHost: %.*s\r\nUser-Agent: ThermostatESP32\r\nAccept: text/event-stream\r\n\r\n", pathWithQuery, hostLength, host);
+    if (ret == -1)
+    {
+        LOG_D("Could not allocate request");
+        return false;
+    }
+    LOG_T("request: %s", request);
+    LOG_T("Sending request");
+    size_t written_bytes = 0;
+    do
+    {
+        ret = esp_tls_conn_write(streaming_tls, request + written_bytes, strlen(request) - written_bytes);
+        if (ret >= 0)
+        {
+            written_bytes += ret;
+        }
+        else if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE)
+        {
+            LOG_D("esp_tls_conn_write error: -%X", -ret);
+            free(request);
+            return false;
+        }
+    } while (written_bytes < strlen(request));
+    free(request);
+    return true;
+}
+
+void FirebaseClient::initializeStream()
+{
+    LOG_T("Initializing stream");
+    if (streamConnected)
+        closeStream();
+    bool success = internal_initializeStream(streamingPathWithQuery, firebaseURL, false);
+    if (!success)
+    {
+        if (streaming_tls)
+            esp_tls_conn_delete(streaming_tls);
+        setError(true);
+        return;
+    }
+    LOG_D("Streaming started");
+    streamConnected = true;
+    setError(false);
+    lastEvent = 0;
+    afterFirstEvent = false;
+    insideEvent = false;
 }
 
 bool FirebaseClient::consumeStreamIfAvailable()
@@ -83,10 +201,64 @@ bool FirebaseClient::consumeStreamIfAvailable()
     }
 
     event = streaming_buf;
-    if (strncmp(streaming_buf, "HTTP/1.1", 8) == 0)
+    if (strncmp(streaming_buf, "HTTP/1.", 7) == 0)
     {
         // the buffer contains the response headers
         int code = atoi(streaming_buf + 9);
+        if (code / 100 == 3)
+        {
+            LOG_D("Redirecting");
+            const char *location = strstr(streaming_buf, "Location: ");
+            if (!location)
+            {
+                LOG_D("No location header");
+                goto error;
+            }
+            const char *location_end = strchr(location, '\r');
+            if (!location_end)
+            {
+                LOG_D("No newline after location");
+                goto error;
+            }
+            streaming_buf[location_end - streaming_buf] = 0;
+            location += 10;
+            closeStream();
+            bool success;
+            if (location[0] == '/')
+            {
+                // relative url
+                success = internal_initializeStream(location, nullptr, false);
+            }
+            else
+            {
+                // absolute url
+                // we search for first / after https://
+                const char *path = strchr(location + 8, '/');
+                if (!path)
+                {
+                    LOG_D("Could not find path");
+                    goto error;
+                }
+                success = internal_initializeStream(path, location, true);
+            }
+            if (!success)
+            {
+                LOG_D("Error initializing stream to new location");
+                if (streaming_tls)
+                {
+                    esp_tls_conn_delete(streaming_tls);
+                }
+                setError(true);
+                return false;
+            }
+            LOG_D("Initialized stream to new location");
+            streamConnected = true;
+            setError(false);
+            lastEvent = 0;
+            afterFirstEvent = false;
+            insideEvent = false;
+            return false;
+        }
         switch (code)
         {
         case 200:
@@ -153,64 +325,6 @@ error:
     return false;
 }
 
-void FirebaseClient::initializeStream()
-{
-    LOG_T("Initializing stream");
-    if (streamConnected)
-        closeStream();
-    esp_tls_cfg_t cfg = {};
-    cfg.cacert_pem_buf = (const unsigned char *) rootCA;
-    cfg.cacert_pem_bytes = strlen(rootCA) + 1;
-    cfg.non_block = true;
-    streaming_tls = esp_tls_init();
-    if (!streaming_tls)
-    {
-        LOG_E("esp_tls_init error");
-        setError(true);
-        return;
-    }
-    LOG_T("Connecting");
-    int ret;
-    while ((ret = esp_tls_conn_new_async(firebaseURL, strlen(firebaseURL), 443, &cfg, streaming_tls)) == 0)
-    {
-        delay(50);
-    }
-    if (ret != 1)
-    {
-        LOG_D("Connection failed");
-        esp_tls_conn_delete(streaming_tls);
-        setError(true);
-        return;
-    }
-    LOG_T("Connection established");
-    
-    // TODO: handle redirects
-
-    LOG_T("Sending request");
-    size_t written_bytes = 0;
-    do
-    {
-        ret = esp_tls_conn_write(streaming_tls, streaming_request + written_bytes, strlen(streaming_request) - written_bytes);
-        if (ret >= 0)
-        {
-            written_bytes += ret;
-        }
-        else if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE)
-        {
-            LOG_D("esp_tls_conn_write error: -%X", -ret);
-            esp_tls_conn_delete(streaming_tls);
-            setError(true);
-            return;
-        }
-    } while (written_bytes < strlen(streaming_request));
-    LOG_D("Streaming started");
-    streamConnected = true;
-    setError(false);
-    lastEvent = 0;
-    afterFirstEvent = false;
-    insideEvent = false;
-}
-
 void FirebaseClient::closeStream()
 {
     LOG_T("Closing stream");
@@ -246,27 +360,37 @@ void FirebaseClient::getJson(const char *path, String &result)
     config.event_handler = http_event_handler;
     esp_http_client_handle_t client = esp_http_client_init(&config);
     LOG_T("Starting connection to retrieve an object");
-    esp_err_t err = esp_http_client_perform(client);
-    if (err == ESP_OK)
-    {
-        int code = esp_http_client_get_status_code(client);
-        if (code == 200)
+    // loop because we need to manually handle some redirects
+    do {
+        esp_err_t err = esp_http_client_perform(client);
+        if (err == ESP_OK)
         {
-            LOG_D("The object was retrieved successfully");
-            result = sstring.readString();
-            setError(false);
+            int code = esp_http_client_get_status_code(client);
+            if (code / 100 == 3)
+            {
+                // we must manually handle redirections with codes 303, 307, 308
+                // 301 and 302 are handled automatically
+                esp_http_client_set_redirection(client);
+                continue;
+            }
+            if (code == 200)
+            {
+                LOG_D("The object was retrieved successfully");
+                result = sstring.readString();
+                setError(false);
+            }
+            else
+            {
+                LOG_D("Server returned status code: %d", code);
+                setError(true);
+            }
         }
         else
         {
-            LOG_D("Server returned status code: %d", code);
+            LOG_D("Connection failed with error: %d, %s", err, esp_err_to_name(err));
             setError(true);
         }
-        
-    }
-    else
-    {
-        LOG_D("Connection failed with error: %d, %s", err, esp_err_to_name(err));
-        setError(true);
-    }
+        break;
+    } while(true);
     esp_http_client_cleanup(client);
 }

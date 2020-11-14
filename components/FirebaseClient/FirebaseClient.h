@@ -52,13 +52,16 @@ public:
     ~FirebaseClient();
 
 private:
+    bool internal_initializeStream(const char *pathWithQuery, const char *location, bool locationIsURL);
+
     bool error;
     const char *rootCA;
     const char *firebaseURL;
     char query[50];
 
     bool streamConnected;
-    char *streaming_request;
+    char *streamingHost;
+    char *streamingPathWithQuery;
     esp_tls_t *streaming_tls;
     char streaming_buf[512];
     TickType_t lastEvent;
