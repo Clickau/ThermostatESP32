@@ -49,9 +49,9 @@ TickType_t             lastTemperatureUpdate = 0;
 volatile unsigned long lastButtonPress       = 0;
 portMUX_TYPE           lastButtonPressMux    = portMUX_INITIALIZER_UNLOCKED;
 
-bool   temporaryScheduleActive = false;
-float  temporaryScheduleTemp   = NAN;
-time_t temporaryScheduleEnd    = 0;
+bool    temporaryScheduleActive = false;
+float   temporaryScheduleTemp   = NAN;
+int64_t temporaryScheduleEnd    = 0;
 SemaphoreHandle_t temporaryScheduleMutex;
 
 
@@ -454,14 +454,12 @@ void firebaseLoopTask(void *)
             // upload temporary schedule
             LOG_T("Uploading temporary schedule");
             char string[100];
-            time_t now;
-            time(&now);
             xSemaphoreTake(temporaryScheduleMutex, portMAX_DELAY);
             if (temporaryScheduleActive)
             {
                 snprintf(string, sizeof(string),
-                    R"==({"active": true, "temperature": %.1f, "remaining": %ld, "time": {".sv": "timestamp"}})==",
-                    temporaryScheduleTemp, (temporaryScheduleEnd == -1) ? -1 : temporaryScheduleEnd - now);
+                    R"==({"active": true, "temperature": %.1f, "remaining": %lld, "time": {".sv": "timestamp"}})==",
+                    temporaryScheduleTemp, (temporaryScheduleEnd == -1) ? -1 : temporaryScheduleEnd - millis());
             }
             else
             {
@@ -571,9 +569,7 @@ void evaluateSchedulesLoopTask(void *)
         if (temporaryScheduleActive)
         {
             LOG_D("Temporary schedule is active");
-            time_t now;
-            time(&now);
-            if (temporaryScheduleEnd == -1 || now < temporaryScheduleEnd)
+            if (temporaryScheduleEnd == -1 || millis() < temporaryScheduleEnd)
             {
                 bool signal = cmpTempSetTemp(temperature, temporaryScheduleTemp);
                 sendSignalToHeater(signal);
@@ -939,9 +935,7 @@ void temporaryScheduleSetup()
                 temporaryScheduleEnd = -1;
             else
             {
-                time_t now;
-                time(&now);
-                temporaryScheduleEnd = now + duration * 60;
+                temporaryScheduleEnd = millis() + duration * 60 * 1000;
             }
         }
         LOG_D("Saved temporary schedule");
@@ -993,9 +987,7 @@ void temporaryScheduleHelper(float temp, int duration, int option, int sel)
             ptDuration = -1;
         else
         {
-            time_t now;
-            time(&now);
-            ptDuration = (temporaryScheduleEnd - now) / 60;
+            ptDuration = (temporaryScheduleEnd - millis()) / 1000 / 60;
         }
         xSemaphoreGive(temporaryScheduleMutex);
         if (ptDuration == -1)
