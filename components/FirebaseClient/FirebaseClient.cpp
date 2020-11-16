@@ -109,7 +109,6 @@ bool FirebaseClient::internal_initializeStream(const char *pathWithQuery, const 
         LOG_D("Could not allocate request");
         return false;
     }
-    LOG_T("request: %s", request);
     LOG_T("Sending request");
     size_t written_bytes = 0;
     do
@@ -350,47 +349,57 @@ void FirebaseClient::setError(bool value)
 void FirebaseClient::getJson(const char *path, String &result)
 {
     StreamString sstring;
+    sendRequest(HTTP_METHOD_GET, path, nullptr, &sstring);
+    if (!getError())
+    {
+        result = sstring.readString();
+    }
+}
+
+void FirebaseClient::setJson(const char *path, const char *data)
+{
+    sendRequest(HTTP_METHOD_PUT, path, data, nullptr);
+}
+
+void FirebaseClient::pushJson(const char *path, const char *data)
+{
+    sendRequest(HTTP_METHOD_POST, path, data, nullptr);
+}
+
+void FirebaseClient::sendRequest(int method, const char *path, const char *data, void *responseReceiver)
+{
     esp_http_client_config_t config = {};
     config.cert_pem = rootCA;
     config.host = firebaseURL;
     config.path = path;
     config.query = query;
     config.transport_type = HTTP_TRANSPORT_OVER_SSL;
-    config.user_data = &sstring;
     config.event_handler = http_event_handler;
+    config.user_data = responseReceiver;
     esp_http_client_handle_t client = esp_http_client_init(&config);
-    LOG_T("Starting connection to retrieve an object");
-    // loop because we need to manually handle some redirects
-    do {
-        esp_err_t err = esp_http_client_perform(client);
-        if (err == ESP_OK)
+    esp_http_client_set_method(client, (esp_http_client_method_t) method);
+    if (data)
+        esp_http_client_set_post_field(client, data, strlen(data));
+    LOG_T("Starting connection");
+    esp_err_t err = esp_http_client_perform(client);
+    if (err == ESP_OK)
+    {
+        int code = esp_http_client_get_status_code(client);
+        if (code == 200)
         {
-            int code = esp_http_client_get_status_code(client);
-            if (code / 100 == 3)
-            {
-                // we must manually handle redirections with codes 303, 307, 308
-                // 301 and 302 are handled automatically
-                esp_http_client_set_redirection(client);
-                continue;
-            }
-            if (code == 200)
-            {
-                LOG_D("The object was retrieved successfully");
-                result = sstring.readString();
-                setError(false);
-            }
-            else
-            {
-                LOG_D("Server returned status code: %d", code);
-                setError(true);
-            }
+            LOG_T("Request was successful");
+            setError(false);
         }
         else
         {
-            LOG_D("Connection failed with error: %d, %s", err, esp_err_to_name(err));
+            LOG_D("Server returned status code: %d", code);
             setError(true);
         }
-        break;
-    } while(true);
+    }
+    else
+    {
+        LOG_D("Connection failed with error: %d, %s", err, esp_err_to_name(err));
+        setError(true);
+    }
     esp_http_client_cleanup(client);
 }

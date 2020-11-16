@@ -44,6 +44,7 @@ uint8_t dhtReachability = 0;
 SemaphoreHandle_t sensorValuesMutex;
 
 unsigned long          lastRetryErrors       = 0;
+unsigned long          lastUploadState       = 0;
 TickType_t             lastTemperatureUpdate = 0;
 volatile unsigned long lastButtonPress       = 0;
 portMUX_TYPE           lastButtonPressMux    = portMUX_INITIALIZER_UNLOCKED;
@@ -255,6 +256,9 @@ void normalOperationTask(void *)
         &evaluateSchedulesTaskHandle,
         0);
 
+    // deactivate the temporary schedule in Firebase
+    xTaskNotifyGive(firebaseTaskHandle);
+
     vTaskDelete(nullptr);
 }
 
@@ -391,7 +395,6 @@ void firebaseLoopTask(void *)
     LOG_T("begin");
     while (true)
     {
-        delay(500);
         if (!firebaseClient.getError())
             if (firebaseClient.consumeStreamIfAvailable())
             {
@@ -419,6 +422,58 @@ void firebaseLoopTask(void *)
                     LOG_D("Failed to get new schedules");
                 }
             }
+
+        if (!firebaseClient.getError() && millis() - lastUploadState > intervalUploadState)
+        {
+            lastUploadState = millis();
+            char state[100];
+            xSemaphoreTake(sensorValuesMutex, portMAX_DELAY);
+            xSemaphoreTake(heaterStateMutex, portMAX_DELAY);
+            if (!isnan(temperature))
+            {
+                snprintf(state, sizeof(state), 
+                    R"==({"temperature": %.1f, "humidity": %d, "state": %s, "time": {".sv": "timestamp"}})==",
+                    isnan(temperature) ? -1.0f : temperature, humidity, heaterState ? "true" : "false");
+            }
+            else
+            {
+                strcpy(state, R"==({"temperature": "nan", "humidity": -1, "state": false, "time": {".sv": "timestamp"}})==");
+            }
+            xSemaphoreGive(sensorValuesMutex);
+            xSemaphoreGive(heaterStateMutex);
+            firebaseClient.pushJson("/State.json", state);
+            if (firebaseClient.getError())
+            {
+                LOG_D("Error uploading state");
+            }
+        }
+
+        uint32_t notification = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(500));
+        if (!firebaseClient.getError() && notification)
+        {
+            // upload temporary schedule
+            LOG_T("Uploading temporary schedule");
+            char string[100];
+            time_t now;
+            time(&now);
+            xSemaphoreTake(temporaryScheduleMutex, portMAX_DELAY);
+            if (temporaryScheduleActive)
+            {
+                snprintf(string, sizeof(string),
+                    R"==({"active": true, "temperature": %.1f, "remaining": %ld, "time": {".sv": "timestamp"}})==",
+                    temporaryScheduleTemp, (temporaryScheduleEnd == -1) ? -1 : temporaryScheduleEnd - now);
+            }
+            else
+            {
+                strcpy(string, R"==({"active": false})==");
+            }
+            xSemaphoreGive(temporaryScheduleMutex);
+            firebaseClient.setJson("/TemporarySchedule.json", string);
+            if (firebaseClient.getError())
+            {
+                LOG_D("Error uploading temporary schedule");
+            }
+        }
 
         if (millis() - lastRetryErrors > intervalRetryErrors)
         {
@@ -527,6 +582,7 @@ void evaluateSchedulesLoopTask(void *)
             {
                 LOG_D("Temporary schedule expired");
                 temporaryScheduleActive = false;
+                xTaskNotifyGive(firebaseTaskHandle);
             }
             xSemaphoreGive(sensorValuesMutex);
             xSemaphoreGive(temporaryScheduleMutex);
@@ -890,6 +946,7 @@ void temporaryScheduleSetup()
         }
         LOG_D("Saved temporary schedule");
         xTaskNotifyGive(evaluateSchedulesTaskHandle);
+        xTaskNotifyGive(firebaseTaskHandle);
         break;
     case 1:
         LOG_D("Return without changing anything");
@@ -898,6 +955,7 @@ void temporaryScheduleSetup()
         temporaryScheduleActive = false;
         LOG_D("Deleted temporary schedule");
         xTaskNotifyGive(evaluateSchedulesTaskHandle);
+        xTaskNotifyGive(firebaseTaskHandle);
         break;
     }
     xSemaphoreGive(temporaryScheduleMutex);

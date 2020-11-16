@@ -45,14 +45,15 @@ public:
      */
     void getJson(const char *path, String &result);
 
-    void setJson(const char *path, const String &data);
+    void setJson(const char *path, const char *data);
 
-    void pushJson(const char *path, const String &data);
+    void pushJson(const char *path, const char *data);
 
     ~FirebaseClient();
 
 private:
     bool internal_initializeStream(const char *pathWithQuery, const char *location, bool locationIsURL);
+    void sendRequest(int method, const char *path, const char *data, void *responseReceiver);
 
     bool error;
     const char *rootCA;

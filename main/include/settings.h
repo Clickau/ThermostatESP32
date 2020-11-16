@@ -59,6 +59,7 @@ const unsigned long waitingTimeInTemporaryScheduleMenu = 5000;    // (ms) The ti
 const unsigned long waitingTimeNTP                     = 10000;   // (ms) The time we wait for the first NTP sync, after which we enter Manual Time if the sync was not successful
 const unsigned long intervalRetryErrors                = 300000;  // (ms) The time interval at which we attempt to resolve errors (reconnect to Wifi, to Firebase etc.)
 const unsigned long intervalUpdateTemperature          = 10000;   // (ms) The time interval at which we read the temperature and humidity from the sensor
+const unsigned long intervalUploadState                = 60000;   // (ms) The time interval at which we upload the current temperature, humidity and heater state to Firebase
 
 
 // Temperature settings
