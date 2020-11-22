@@ -33,9 +33,8 @@ const char timezoneString[] = "EET-2EEST,M3.5.0/3,M10.5.0/4";  // Represents the
 
 
 // Setup Wifi AP settings
-const char setupWifiAPSSID[]     = "Thermostat";
-const char setupWifiAPPassword[] = "Thermostat123";
-const IPAddress setupWifiServerIP{192, 168, 1, 1};
+const char setupAPSSID[]     = "Thermostat";
+const char setupAPPassword[] = "Thermostat123";
 
 
 // mDNS hostname used for OTA Update

@@ -1,22 +1,20 @@
 // Strings for fullscreen errors
-const char errorOpenSPIFFSString[]      = "Critical Error\nOpening SPIFFS";
-const char errorOpenConfigWriteString[] = "Critical Error\nOpening config\nfor writing";
-const char errorOpenConfigReadString[]  = "Error\nOpening config\ntry Setup";
-const char errorWifiConnectString[]     = "Error\nConnecting to\nWifi";
-const char errorNTPString[]             = "Error\nGetting NTP\nEnter it\nmanually";
+const char errorSettingsNotFound[]  = "Settings not\nfound\nEntering Setup";
+const char errorSetupServer[]       = "Error starting server";
+const char errorWifiConnectString[] = "Error\nConnecting to\nWifi";
+const char errorNTPString[]         = "Error\nGetting NTP\nEnter it\nmanually";
 
 // Strings for Startup Menu
 const char menuTitleString[]      = "Startup Menu";
 const char menuNormalModeString[] = "Normal Op.";
-const char menuSetupWifiString[]  = "Setup Wifi";
+const char menuSetupString[]      = "Setup";
 const char menuOTAUpdateString[]  = "OTA Update";
 
-// Strings for Setup Wifi
-const char setupWifiSSIDAndPassString[]    = "SSID and pass.";
-const char setupWifiIPString[]             = "IP";
-const char serverNotAllArgsPresentString[] = "Not all the arguments are present";
-const char serverReceivedArgsString[]      = "OK";
-const char gotCredentialsString[]          = "Got credetials";
+// Strings for Setup
+const char setupSSIDPassString[]       = "SSID and pass.";
+const char setupIPString[]             = "IP";
+const char setupGotCredentialsString[] = "Got\ncredentials";
+const char setupRestartingString[]     = "Restarting";
 
 // Strings for OTA Update
 const char updateWaitingString[]        = "Waiting for\nupdate";

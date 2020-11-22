@@ -1,7 +1,5 @@
 #include <Arduino.h>
 #include <Adafruit_PCD8544.h>
-#include <WebServer.h>
-#include <SPIFFS.h>
 #include <ArduinoOTA.h>
 #include <lwip/apps/sntp.h>
 #include <DHTesp.h>
@@ -10,10 +8,11 @@
 #include <esp_event.h>
 #include <esp_wifi.h>
 #include <cstring>
+#include <nvs_flash.h>
+#include <esp_http_server.h>
 
 #include "string_consts.h"
 #include "settings.h"
-#include "webpage.h"
 #include "FirebaseClient.h"
 #include "Logger.h"
 #include "DSEG7Classic-Bold6pt.h"
@@ -26,6 +25,11 @@ enum class Button
     Up,
     Down
 };
+
+struct settings_t {
+    uint8_t ssid[32];
+    uint8_t password[64];
+} settings;
 
 extern const char firebaseRootCA[] asm("_binary_firebaseio_root_ca_pem_start");
 
@@ -57,7 +61,6 @@ SemaphoreHandle_t temporaryScheduleMutex;
 
 Adafruit_PCD8544 display{pinDC, pinCS, pinRST};
 FirebaseClient firebaseClient{firebaseRootCA, firebasePath, firebaseSecret, "/Schedules.json"};
-WebServer server{80};
 DHTesp dht;
 
 TaskHandle_t setupTaskHandle;
@@ -71,9 +74,8 @@ TaskHandle_t evaluateSchedulesTaskHandle;
 
 // Tasks
 void normalOperationTask(void *);
-void setupWifiTask(void *);
+void setupTask(void *);
 void otaUpdateTask(void *);
-void serverLoopTask(void *);
 void updateLoopTask(void *);
 void firebaseLoopTask(void *);
 void uiLoopTask(void *);
@@ -84,9 +86,9 @@ void evaluateSchedulesLoopTask(void *);
 void sendSignalToHeater(bool signal);
 void simpleDisplay(const char *str);
 bool connectSTAMode();
-void getCredentials(String &ssid, String &password);
 void subscribeToButtonEvents(TaskHandle_t taskHandle);
 void unsubscribeFromButtonEvents();
+bool loadSettings();
 
 // Startup Menu
 void showStartupMenu();
@@ -96,11 +98,12 @@ void startupMenuHelper(int highlightedOption);
 void manualTimeSetup();
 void manualTimeHelper(int h, int m, int d, int mth, int y, int sel);
 
-// Setup Wifi helpers
-void setupWifiDisplayInfo();
-void setupWifiHandleRoot();
-void setupWifiHandlePost();
-void storeCredentials(const String &ssid, const String &password);
+// Setup helpers
+void setupDisplayInfo();
+esp_err_t setupGetInfoHandler(httpd_req_t *req);
+esp_err_t setupGetSettingsHandler(httpd_req_t *req);
+esp_err_t setupPostSettingsHandler(httpd_req_t *req);
+esp_err_t setupRestartHandler(httpd_req_t *req);
 
 // Display helpers
 void updateDisplay();
@@ -125,6 +128,10 @@ void buttonISR(void *button);
 // Event handlers
 void wifi_event_handler(void *, esp_event_base_t base, int32_t id, void *);
 
+const httpd_uri_t setupGetInfoURI = { "/", HTTP_GET, setupGetInfoHandler, nullptr };
+const httpd_uri_t setupGetSettingsURI = { "/settings", HTTP_GET, setupGetSettingsHandler, nullptr };
+const httpd_uri_t setupPostSettingsURI = { "/settings", HTTP_POST, setupPostSettingsHandler, nullptr };
+const httpd_uri_t setupRestartURI = { "/restart", HTTP_GET, setupRestartHandler, nullptr };
 
 extern "C" void app_main()
 {
@@ -144,6 +151,27 @@ extern "C" void app_main()
     display.clearDisplay();
     display.begin();
     display.setContrast(displayContrast);
+
+    tcpip_adapter_init();
+    ESP_ERROR_CHECK(esp_event_loop_init(nullptr, nullptr));
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    bool success = loadSettings();
+    if (!success)
+    {
+        LOG_D("Settings not found, entering Setup");
+        simpleDisplay(errorSettingsNotFound);
+        delay(3000);
+        xTaskCreate(
+            setupTask,
+            "setupTask",
+            3072,
+            nullptr,
+            1,
+            &setupTaskHandle);
+        return;
+    }
 
     // menu where the user selects which operation mode should be used
     showStartupMenu();
@@ -262,31 +290,39 @@ void normalOperationTask(void *)
     vTaskDelete(nullptr);
 }
 
-void setupWifiTask(void *)
+void setupTask(void *)
 {
     LOG_T("begin");
-    setupWifiDisplayInfo();
+    setupDisplayInfo();
 
     LOG_T("Starting Wifi AP");
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP(setupWifiAPSSID, setupWifiAPPassword);
-    delay(1000); // delay to let the AP initialize
-    WiFi.softAPConfig(setupWifiServerIP, setupWifiServerIP, IPAddress(255, 255, 255, 0));
+    wifi_config_t wifi_config = {};
+    strcpy((char *) wifi_config.ap.ssid, setupAPSSID);
+    strcpy((char *) wifi_config.ap.password, setupAPPassword);
+    wifi_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
+    wifi_config.ap.max_connection = 1;
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_AP, &wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
     LOG_T("Started Wifi AP");
 
     LOG_T("Starting server");
-    server.on("/", setupWifiHandleRoot);
-    server.on("/post", HTTPMethod::HTTP_POST, setupWifiHandlePost);
-    server.begin();
-    LOG_D("Started server");
+    httpd_handle_t server = nullptr;
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    esp_err_t err = httpd_start(&server, &config);
+    if (err != ESP_OK)
+    {
+        LOG_E("Error starting server: %d", err);
+        simpleDisplay(errorSetupServer);
+        vTaskDelete(nullptr);
+        return;
+    }
 
-    xTaskCreate(
-        serverLoopTask,
-        "serverLoopTask",
-        3072,
-        nullptr,
-        1,
-        &serverTaskHandle);
+    httpd_register_uri_handler(server, &setupGetInfoURI);
+    httpd_register_uri_handler(server, &setupGetSettingsURI);
+    httpd_register_uri_handler(server, &setupPostSettingsURI);
+    httpd_register_uri_handler(server, &setupRestartURI);
+    LOG_D("Started server");
 
     vTaskDelete(nullptr);
 }
@@ -365,17 +401,6 @@ void otaUpdateTask(void *)
         1,
         &updateTaskHandle);
 
-    vTaskDelete(nullptr);
-}
-
-void serverLoopTask(void *)
-{
-    LOG_T("begin");
-    while (true)
-    {
-        server.handleClient();
-        delay(5);
-    }
     vTaskDelete(nullptr);
 }
 
@@ -677,7 +702,7 @@ void evaluateSchedulesLoopTask(void *)
 void showStartupMenu()
 {
     // operation mode:  0 - Normal Operation
-    //                  1 - Setup Wifi
+    //                  1 - Setup
     //                  2 - OTA Update
     // first the selected option is Normal Operation
     LOG_T("begin");
@@ -744,8 +769,8 @@ void showStartupMenu()
         break;
     case 1:
         xTaskCreate(
-            setupWifiTask,
-            "setupWifiTask",
+            setupTask,
+            "setupTask",
             3072,
             nullptr,
             1,
@@ -783,7 +808,7 @@ void startupMenuHelper(int highlightedOption)
     else
         display.setTextColor(BLACK);
 
-    display.println(menuSetupWifiString);
+    display.println(menuSetupString);
 
     if (highlightedOption == 2)
         display.setTextColor(WHITE, BLACK);
@@ -1345,93 +1370,117 @@ void manualTimeHelper(int h, int m, int d, int mth, int y, int sel)
 }
 
 
-/* Setup Wifi Helpers */
+/* Setup Helpers */
 
-void setupWifiDisplayInfo()
+void setupDisplayInfo()
 {
     LOG_T("begin");
     display.clearDisplay();
     display.setTextSize(1);
     display.setCursor(0, 0);
     display.setTextColor(BLACK);
-    display.println(setupWifiSSIDAndPassString);
-    display.println(setupWifiAPSSID);
-    display.println(setupWifiAPPassword);
+    display.println(setupSSIDPassString);
+    display.println(setupAPSSID);
+    display.println(setupAPPassword);
     display.println();
-    display.println(setupWifiIPString);
-    display.println(setupWifiServerIP);
+    display.println(setupIPString);
+    display.println("192.168.4.1");
     display.display();
 }
 
-// function called when a client accesses the root of the server, sends back to the client a webpage with a form
-void setupWifiHandleRoot()
+esp_err_t setupGetInfoHandler(httpd_req_t *req)
 {
-    LOG_T("begin");
-    server.send(200, "text/html", setupWifiPage);
+    const char *infoString = R"==({"version": 0.1, "settings": ["wifi"]})==";
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, infoString, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
 }
 
-// function called when a client sends a POST request to the server, at location /post, stores the SSID and password from the request in SPIFFS
-void setupWifiHandlePost()
+esp_err_t setupGetSettingsHandler(httpd_req_t *req)
 {
-    LOG_T("begin");
-    if (!server.hasArg("ssid") || !server.hasArg("password"))
-    {
-        server.send(400, "text/plain", serverNotAllArgsPresentString);
-        LOG_D("Not all arguments were present in POST request");
-        return;
-    }
-    server.send(200, "text/plain", serverReceivedArgsString);
-    String ssid = server.arg("ssid");
-    String password = server.arg("password");
-    LOG_D("Received SSID and password");
+    char response[256];
+    StaticJsonDocument<512> doc;
+    doc["ssid"] = settings.ssid;
+    serializeJson(doc, response);
 
-    storeCredentials(ssid, password);
-    // we display a success message and restart the ESP
-    display.clearDisplay();
-    display.setCursor(0, 0);
-    display.setTextColor(BLACK);
-    display.println(gotCredentialsString);
-    display.println(ssid);
-    display.println(password);
-    display.display();
-    delay(5000);
-    LOG_D("Restarting ESP");
-    ESP.restart();
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
 }
 
-// stores the provided Wifi credentials in SPIFFS
-void storeCredentials(const String &ssid, const String &password)
+esp_err_t setupPostSettingsHandler(httpd_req_t *req)
 {
-    LOG_T("begin");
-    // we begin SPIFFS with formatOnFail=true, so that, if the initial begin fails, it will format the filesystem and try again
-    LOG_T("Starting SPIFFS");
-    if (!SPIFFS.begin(true))
+    char buffer[256];
+    if (req->content_len > sizeof(buffer) - 1)
     {
-        LOG_E("Error starting SPIFFS");
-        simpleDisplay(errorOpenSPIFFSString);
-        LOG_E("Waiting for user intervention");
-        while (true)
-        {
-            delay(1000);
-        }
+        LOG_E("content_len too large: %d", req->content_len);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Content-Length too large");
+        return ESP_FAIL;
     }
-    LOG_T("Opening config.txt for writing");
-    File wifiConfigFile = SPIFFS.open("/config.txt", "w+");
-    if (!wifiConfigFile)
+
+    int ret = httpd_req_recv(req, buffer, sizeof(buffer) - 1);
+    if (ret < 0)
     {
-        LOG_E("Error opening config file for writing");
-        simpleDisplay(errorOpenConfigWriteString);
-        LOG_E("Waiting for user intervention");
-        while (true)
-        {
-            delay(1000);
-        }
+        LOG_E("Error httpd_req_recv: %d", ret);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Error reading request");
+        return ESP_FAIL;
     }
-    wifiConfigFile.println(ssid);
-    wifiConfigFile.println(password);
-    wifiConfigFile.close();
-    SPIFFS.end();
-    LOG_D("Stored credentials successfully");
+    buffer[ret] = 0;
+
+    StaticJsonDocument<512> doc;
+    deserializeJson(doc, buffer);
+    const char *ssid = doc["ssid"];
+    const char *password = doc["password"];
+    if (!ssid || !password)
+    {
+        LOG_W("Not all settings are present");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Not all settings are present");
+        return ESP_FAIL;
+    }
+
+    settings_t new_settings = {};
+    strncpy((char *) new_settings.ssid, ssid, 31);
+    strncpy((char *) new_settings.password, password, 63);
+
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open("settings", NVS_READWRITE, &nvs_handle);
+    if (err != ESP_OK)
+    {
+        LOG_E("Error nvs_open: %d", err);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Error saving settings");
+        return ESP_FAIL;
+    }
+    
+    err = nvs_set_blob(nvs_handle, "settings", &new_settings, sizeof(new_settings));
+    if (err != ESP_OK)
+    {
+        nvs_close(nvs_handle);
+        LOG_E("Error nvs_set_blob: %d", err);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Error saving settings");
+        return ESP_FAIL;
+    }
+    err = nvs_commit(nvs_handle);
+    nvs_close(nvs_handle);
+    if (err != ESP_OK)
+    {
+        LOG_E("Error nvs_commit: %d", err);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Error saving settings");
+        return ESP_FAIL;
+    }
+
+    settings = new_settings;
+
+    simpleDisplay(setupGotCredentialsString);
+    httpd_resp_send(req, "OK", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+esp_err_t setupRestartHandler(httpd_req_t *req)
+{
+    simpleDisplay(setupRestartingString);
+    httpd_resp_send(req, "OK", HTTPD_RESP_USE_STRLEN);
+    delay(3000);
+    esp_restart();
 }
 
 
@@ -1453,24 +1502,17 @@ bool connectSTAMode()
 {
     LOG_T("begin");
     LOG_D("Trying to connect to Wifi");
-    String ssid;
-    String password;
-    getCredentials(ssid, password);
 
-    tcpip_adapter_init();
-    ESP_ERROR_CHECK(esp_event_loop_init(nullptr, nullptr));
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler, nullptr));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event_handler, nullptr));
-    wifi_init_config_t init_cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&init_cfg));
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     wifi_config_t wifi_config = {};
     wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     wifi_config.sta.pmf_cfg.capable = true;
     wifi_config.sta.pmf_cfg.required = false;
-    strcpy((char *)wifi_config.sta.ssid, ssid.c_str());
-    strcpy((char *)wifi_config.sta.password, password.c_str());
+    strncpy((char *) wifi_config.sta.ssid, (const char *) settings.ssid, 31);
+    strncpy((char *) wifi_config.sta.password, (const char *) settings.password, 63);
     
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
@@ -1499,42 +1541,6 @@ bool connectSTAMode()
     }
 }
 
-// gets the Wifi login credentials from the SPIFFS
-void getCredentials(String &ssid, String &password)
-{
-    LOG_T("begin");
-    // we begin SPIFFS with formatOnFail=true, so that, if the initial begin fails, it will format the filesystem and try again
-    LOG_T("Starting SPIFFS");
-    if (!SPIFFS.begin(true))
-    {
-        LOG_E("Error starting SPIFFS");
-        simpleDisplay(errorOpenSPIFFSString);
-        ssid = "";
-        password = "";
-        LOG_D("Set SSID and Password to empty strings");
-        delay(3000);
-        return;
-    }
-    LOG_T("Opening config.txt for reading");
-    File wifiConfigFile = SPIFFS.open("/config.txt", "r");
-    if (!wifiConfigFile)
-    {
-        LOG_W("Error opening config file for reading, maybe Setup Wifi hasn't run at all");
-        simpleDisplay(errorOpenConfigReadString);
-        ssid = "";
-        password = "";
-        delay(3000);
-        return;
-    }
-    ssid = wifiConfigFile.readStringUntil('\r');
-    wifiConfigFile.read(); // line ending is CR&LF so we read the \n character
-    password = wifiConfigFile.readStringUntil('\r');
-    wifiConfigFile.read(); // line ending is CR&LF so we read the \n character
-    wifiConfigFile.close();
-    SPIFFS.end();
-    LOG_D("Got SSID and password");
-}
-
 void subscribeToButtonEvents(TaskHandle_t taskHandle)
 {
     buttonSubscribedTaskHandle = taskHandle;
@@ -1560,6 +1566,34 @@ void sendSignalToHeater(bool signal)
     heaterState = signal;
     xSemaphoreGive(heaterStateMutex);
     digitalWrite(pinHeater, signal);
+}
+
+bool loadSettings()
+{
+    settings = {};
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open("settings", NVS_READWRITE, &nvs_handle);
+    if (err != ESP_OK)
+    {
+        LOG_E("Error nvs_open: %d", err);
+        return false;
+    }
+
+    size_t size = sizeof(settings);
+    err = nvs_get_blob(nvs_handle, "settings", &settings, &size);
+    nvs_close(nvs_handle);
+    if (err == ESP_ERR_NVS_NOT_FOUND)
+    {
+        LOG_D("Settings not found");
+        return false;
+    }
+    else if (err != ESP_OK)
+    {
+        LOG_E("Error nvs_get_blob: %d", err);
+        return false;
+    }
+    LOG_D("Loaded settings");
+    return true;
 }
 
 
