@@ -37,8 +37,8 @@ const char setupAPSSID[]     = "Thermostat";
 const char setupAPPassword[] = "Thermostat123";
 
 
-// mDNS hostname used for OTA Update
-const char otaHostname[] = "Thermostat";
+// mDNS hostname used for Setup and OTA Update
+const char mDNSHostname[] = "thermostat";
 
 
 // Display settings

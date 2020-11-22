@@ -10,6 +10,7 @@
 #include <cstring>
 #include <nvs_flash.h>
 #include <esp_http_server.h>
+#include <mdns.h>
 
 #include "string_consts.h"
 #include "settings.h"
@@ -306,10 +307,23 @@ void setupTask(void *)
     ESP_ERROR_CHECK(esp_wifi_start());
     LOG_T("Started Wifi AP");
 
+    LOG_T("Starting mDNS");
+    esp_err_t err = mdns_init();
+    if (err != ESP_OK)
+    {
+        LOG_E("Error starting mDNS");
+    }
+    else
+    {
+        LOG_D("Started mDNS");
+        mdns_hostname_set(mDNSHostname);
+    }
+    
+
     LOG_T("Starting server");
     httpd_handle_t server = nullptr;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    esp_err_t err = httpd_start(&server, &config);
+    err = httpd_start(&server, &config);
     if (err != ESP_OK)
     {
         LOG_E("Error starting server: %d", err);
@@ -344,7 +358,7 @@ void otaUpdateTask(void *)
     }
     LOG_D("Waiting for update");
     simpleDisplay(updateWaitingString);
-    ArduinoOTA.setHostname(otaHostname);
+    ArduinoOTA.setHostname(mDNSHostname);
     ArduinoOTA
         .onStart([]() {
             LOG_D("Update started");
