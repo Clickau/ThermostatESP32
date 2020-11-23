@@ -4,17 +4,18 @@
 #include <Arduino.h>
 #include <esp_tls.h>
 
-// custom HTTPClient that can handle Firebase Streaming
 class FirebaseClient
 {
 public:
 
-    /* _rootCA - the SSL root certificate of Firebase
-     * _url - url to the database, e.g. example.firebaseio.com
-     * _secret - one of the secret keys of the database
-     * _retryTimes - number of times we try a request if it fails, before we return error
+    FirebaseClient();
+
+    /* rootCert - TLS certificate of Firebase's authority (Google Trust Services)    
+     * url - URL of database (example.firebaseio.com)
+     * secret - secret key of database
+     * streamingPath - path in database where client should listen for changes
      */
-    FirebaseClient(const char *_rootCA, const char *_url, const char *_secret, const char *_streamingPath);
+    void begin(const char *rootCert, const char *url, const char *secret, const char *streamingPath);
 
     /* checks if anything changed in the database
      * if it receives updates on the stream, it checks if the event is of type 'put', and if so, it means something in the database changed, so it clears the stream and returns true
@@ -22,11 +23,7 @@ public:
      */
     bool consumeStreamIfAvailable();
 
-    /*
-     * initialize a stream that will receive a notification when something changes in the database
-     * streamingPath is the part after the url (and without .json) of the path to the json blob that contains the data we want to monitor
-     * for example if we want to monitor example.firebaseio.com/Data/Schedules.json, streamingPath should be "Data/Schedules" or "/Data/Schedules"
-     */
+    // initialize a stream that will receive a notification when something changes in the database
     void initializeStream();
 
     // closes the current streaming connection
@@ -37,10 +34,9 @@ public:
 
     bool getError();
 
-    /*
-     * gets the string that contains the json representation of the object
-     * path is the part after the url (and without .json) of the path to the json blob that contains the data we want
-     * for example if we want to get example.firebaseio.com/Data/Schedules.json, streamingPath should be "Data/Schedules" or "/Data/Schedules"
+    /* gets the string that contains the json representation of the object
+     * path is the part after the url including .json
+     * for example if we want to get example.firebaseio.com/Schedules.json, streamingPath should be "Schedules.json"
      * the string obtained from the request is stored in result; if the request fails, result is not modified
      */
     void getJson(const char *path, String &result);

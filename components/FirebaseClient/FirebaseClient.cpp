@@ -17,20 +17,25 @@ static esp_err_t http_event_handler(esp_http_client_event_handle_t event)
     return ESP_OK;
 }
 
-FirebaseClient::FirebaseClient(const char *_rootCA, const char *_firebaseURL, const char *_secret, const char *_streamingPath):
-    error(false),
-    rootCA(_rootCA),
-    firebaseURL(_firebaseURL),
-    streamConnected(false),
-    streamingHost(nullptr),
-    streamingPathWithQuery(nullptr)
+FirebaseClient::FirebaseClient()
 {
     errorMutex = xSemaphoreCreateMutex();
-    snprintf(query, sizeof(query), "auth=%s", _secret);
-    int ret = asprintf(&streamingPathWithQuery, "%s?%s", _streamingPath, query);
+}
+
+void FirebaseClient::begin(const char *rootCert, const char *url, const char *secret, const char *streamingPath)
+{
+    free(streamingPathWithQuery);
+    free(streamingHost);
+    setError(false);
+    if (streaming_tls)
+        closeStream();
+    rootCA = rootCert;
+    firebaseURL = url;
+    snprintf(query, sizeof(query), "auth=%s", secret);
+    int ret = asprintf(&streamingPathWithQuery, "%s?%s", streamingPath, query);
     if (ret == -1)
     {
-        LOG_D("Could not allocate streamingPathWithQuery");
+        LOG_E("Could not allocate streamingPathWithQuery");
         abort();
     }
 }
@@ -39,6 +44,7 @@ FirebaseClient::~FirebaseClient()
 {
     free(streamingPathWithQuery);
     free(streamingHost);
+    vQueueDelete(errorMutex);
 }
 
 bool FirebaseClient::internal_initializeStream(const char *pathWithQuery, const char *location, bool locationIsURL)

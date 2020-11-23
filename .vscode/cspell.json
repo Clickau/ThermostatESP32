@@ -21,6 +21,7 @@
         "starttm",
         "Tesp",
         "tmnow",
-        "Wifi"
+        "Wifi",
+        "mdns"
     ]
 }

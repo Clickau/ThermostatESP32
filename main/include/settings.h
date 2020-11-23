@@ -29,7 +29,6 @@ const DHTesp::DHT_MODEL_t dhtType = DHTesp::DHT22;
 const char ntpServer0[]     = "0.pool.ntp.org";
 const char ntpServer1[]     = "1.pool.ntp.org";
 const char ntpServer2[]     = "2.pool.ntp.org";
-const char timezoneString[] = "EET-2EEST,M3.5.0/3,M10.5.0/4";  // Represents the timezone in Romania (UTC+2, with DST from last Sunday of March 3:00 to last Sunday of October 4:00)
 
 
 // Setup Wifi AP settings
@@ -46,8 +45,6 @@ const uint8_t displayContrast = 50;
 
 
 // Firebase settings
-const char firebasePath[]   = "arduino-test-8c103.firebaseio.com";
-const char firebaseSecret[] = "wwy3KljIFEEM5Cv4nEbVGSkeKXG1rcooeKrUPmjO";
 const int timesTryFirebase  = 2;                                           // How many times we try to download the schedules from Firebase, before showing error
 
 

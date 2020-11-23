@@ -30,6 +30,9 @@ enum class Button
 struct settings_t {
     uint8_t ssid[32];
     uint8_t password[64];
+    char firebaseURL[64];
+    char firebaseSecret[41];
+    char timezone[64];
 } settings;
 
 extern const char firebaseRootCA[] asm("_binary_firebaseio_root_ca_pem_start");
@@ -61,7 +64,7 @@ SemaphoreHandle_t temporaryScheduleMutex;
 
 
 Adafruit_PCD8544 display{pinDC, pinCS, pinRST};
-FirebaseClient firebaseClient{firebaseRootCA, firebasePath, firebaseSecret, "/Schedules.json"};
+FirebaseClient firebaseClient;
 DHTesp dht;
 
 TaskHandle_t setupTaskHandle;
@@ -129,10 +132,12 @@ void buttonISR(void *button);
 // Event handlers
 void wifi_event_handler(void *, esp_event_base_t base, int32_t id, void *);
 
+
 const httpd_uri_t setupGetInfoURI = { "/", HTTP_GET, setupGetInfoHandler, nullptr };
 const httpd_uri_t setupGetSettingsURI = { "/settings", HTTP_GET, setupGetSettingsHandler, nullptr };
 const httpd_uri_t setupPostSettingsURI = { "/settings", HTTP_POST, setupPostSettingsHandler, nullptr };
 const httpd_uri_t setupRestartURI = { "/restart", HTTP_GET, setupRestartHandler, nullptr };
+
 
 extern "C" void app_main()
 {
@@ -187,6 +192,7 @@ void normalOperationTask(void *)
     LOG_T("Starting DHT sensor");
     dht.setup(pinDHT, dhtType);
     LOG_D("Started DHT sensor");
+    firebaseClient.begin(firebaseRootCA, settings.firebaseURL, settings.firebaseSecret, "/Schedules.json");
     simpleDisplay(waitingForWifiString);
     bool wifiWorking = true;
     if (!connectSTAMode())
@@ -196,7 +202,7 @@ void normalOperationTask(void *)
         wifiWorking = false;
     }
     LOG_T("Starting NTP");
-    configTzTime(timezoneString, ntpServer0, ntpServer1, ntpServer2);
+    configTzTime(settings.timezone, ntpServer0, ntpServer1, ntpServer2);
     LOG_D("Started NTP");
     if (wifiWorking)
     {
@@ -1404,7 +1410,7 @@ void setupDisplayInfo()
 
 esp_err_t setupGetInfoHandler(httpd_req_t *req)
 {
-    const char *infoString = R"==({"version": 0.1, "settings": ["wifi"]})==";
+    const char *infoString = R"==({"version": 1.0, "settings": ["wifi", "firebase", "timezone"]})==";
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, infoString, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
@@ -1412,9 +1418,11 @@ esp_err_t setupGetInfoHandler(httpd_req_t *req)
 
 esp_err_t setupGetSettingsHandler(httpd_req_t *req)
 {
-    char response[256];
+    char response[512];
     StaticJsonDocument<512> doc;
     doc["ssid"] = settings.ssid;
+    doc["firebaseURL"] = settings.firebaseURL;
+    doc["timezone"] = settings.timezone;
     serializeJson(doc, response);
 
     httpd_resp_set_type(req, "application/json");
@@ -1424,7 +1432,7 @@ esp_err_t setupGetSettingsHandler(httpd_req_t *req)
 
 esp_err_t setupPostSettingsHandler(httpd_req_t *req)
 {
-    char buffer[256];
+    char buffer[512];
     if (req->content_len > sizeof(buffer) - 1)
     {
         LOG_E("content_len too large: %d", req->content_len);
@@ -1445,7 +1453,10 @@ esp_err_t setupPostSettingsHandler(httpd_req_t *req)
     deserializeJson(doc, buffer);
     const char *ssid = doc["ssid"];
     const char *password = doc["password"];
-    if (!ssid || !password)
+    const char *firebaseURL = doc["firebaseURL"];
+    const char *firebaseSecret = doc["firebaseSecret"];
+    const char *timezone = doc["timezone"];
+    if (!ssid || !password || !firebaseURL || !firebaseSecret || !timezone)
     {
         LOG_W("Not all settings are present");
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Not all settings are present");
@@ -1455,6 +1466,9 @@ esp_err_t setupPostSettingsHandler(httpd_req_t *req)
     settings_t new_settings = {};
     strncpy((char *) new_settings.ssid, ssid, 31);
     strncpy((char *) new_settings.password, password, 63);
+    strncpy(new_settings.firebaseURL, firebaseURL, 63);
+    strncpy(new_settings.firebaseSecret, firebaseSecret, 40);
+    strncpy(new_settings.timezone, timezone, 63);
 
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open("settings", NVS_READWRITE, &nvs_handle);
@@ -1484,7 +1498,7 @@ esp_err_t setupPostSettingsHandler(httpd_req_t *req)
 
     settings = new_settings;
 
-    simpleDisplay(setupGotCredentialsString);
+    simpleDisplay(setupReceivedSettingsString);
     httpd_resp_send(req, "OK", HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }

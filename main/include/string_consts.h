@@ -11,10 +11,10 @@ const char menuSetupString[]      = "Setup";
 const char menuOTAUpdateString[]  = "OTA Update";
 
 // Strings for Setup
-const char setupSSIDPassString[]       = "SSID and pass.";
-const char setupIPString[]             = "IP";
-const char setupGotCredentialsString[] = "Got\ncredentials";
-const char setupRestartingString[]     = "Restarting";
+const char setupSSIDPassString[]         = "SSID and pass.";
+const char setupIPString[]               = "IP";
+const char setupReceivedSettingsString[] = "Received\nsettings";
+const char setupRestartingString[]       = "Restarting";
 
 // Strings for OTA Update
 const char updateWaitingString[]        = "Waiting for\nupdate";
