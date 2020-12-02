@@ -1,6 +1,5 @@
 #include <Arduino.h>
 #include <Adafruit_PCD8544.h>
-#include <ArduinoOTA.h>
 #include <lwip/apps/sntp.h>
 #include <DHTesp.h>
 #include <ArduinoJson.h>
@@ -27,7 +26,8 @@ enum class Button
     Down
 };
 
-struct settings_t {
+struct settings_t 
+{
     uint8_t ssid[32];
     uint8_t password[64];
     char firebaseURL[64];
@@ -68,8 +68,6 @@ FirebaseClient firebaseClient;
 DHTesp dht;
 
 TaskHandle_t setupTaskHandle;
-TaskHandle_t serverTaskHandle;
-TaskHandle_t updateTaskHandle;
 TaskHandle_t firebaseTaskHandle;
 TaskHandle_t uiTaskHandle;
 TaskHandle_t buttonSubscribedTaskHandle;
@@ -79,8 +77,6 @@ TaskHandle_t evaluateSchedulesTaskHandle;
 // Tasks
 void normalOperationTask(void *);
 void setupTask(void *);
-void otaUpdateTask(void *);
-void updateLoopTask(void *);
 void firebaseLoopTask(void *);
 void uiLoopTask(void *);
 void sensorLoopTask(void *);
@@ -133,10 +129,10 @@ void buttonISR(void *button);
 void wifi_event_handler(void *, esp_event_base_t base, int32_t id, void *);
 
 
-const httpd_uri_t setupGetInfoURI = { "/", HTTP_GET, setupGetInfoHandler, nullptr };
-const httpd_uri_t setupGetSettingsURI = { "/settings", HTTP_GET, setupGetSettingsHandler, nullptr };
+const httpd_uri_t setupGetInfoURI      = { "/", HTTP_GET, setupGetInfoHandler, nullptr };
+const httpd_uri_t setupGetSettingsURI  = { "/settings", HTTP_GET, setupGetSettingsHandler, nullptr };
 const httpd_uri_t setupPostSettingsURI = { "/settings", HTTP_POST, setupPostSettingsHandler, nullptr };
-const httpd_uri_t setupRestartURI = { "/restart", HTTP_GET, setupRestartHandler, nullptr };
+const httpd_uri_t setupRestartURI      = { "/restart", HTTP_GET, setupRestartHandler, nullptr };
 
 
 extern "C" void app_main()
@@ -344,94 +340,6 @@ void setupTask(void *)
     httpd_register_uri_handler(server, &setupRestartURI);
     LOG_D("Started server");
 
-    vTaskDelete(nullptr);
-}
-
-void otaUpdateTask(void *)
-{
-    LOG_T("begin");
-    simpleDisplay(waitingForWifiString);
-    if (!connectSTAMode())
-    {
-        LOG_E("Error connecting to Wifi");
-        simpleDisplay(errorWifiConnectString);
-        // if wifi doesn't work, we do nothing
-        LOG_E("Awaiting reset by user");
-        while (true)
-        {
-            delay(100);
-        }
-    }
-    LOG_D("Waiting for update");
-    simpleDisplay(updateWaitingString);
-    ArduinoOTA.setHostname(mDNSHostname);
-    ArduinoOTA
-        .onStart([]() {
-            LOG_D("Update started");
-            simpleDisplay(updateStartedString);
-        })
-        .onEnd([]() {
-            LOG_D("Update ended");
-            simpleDisplay(updateEndedString);
-        })
-        .onProgress([](unsigned int progress, unsigned int total) {
-            //display.clearDisplay();
-            LOG_D("Update progress: %d%%", progress * 100 / total);
-            //display.printf(updateProgressFormatString, progress * 100 / total);
-            //display.display();
-        })
-        .onError([](ota_error_t error) {
-            display.clearDisplay();
-            display.setTextColor(BLACK);
-            display.setTextSize(1);
-            switch (error)
-            {
-            case OTA_AUTH_ERROR:
-                LOG_E("Update Auth Error");
-                display.println(updateErrorAuthString);
-                break;
-            case OTA_BEGIN_ERROR:
-                LOG_E("Update Begin Error");
-                display.println(updateErrorBeginString);
-                break;
-            case OTA_CONNECT_ERROR:
-                LOG_E("Update Connect Error");
-                display.println(updateErrorConnectString);
-                break;
-            case OTA_RECEIVE_ERROR:
-                LOG_E("Update Receive Error");
-                display.println(updateErrorReceiveString);
-                break;
-            case OTA_END_ERROR:
-                LOG_E("Update End Error");
-                display.println(updateErrorEndString);
-                break;
-            }
-            display.display();
-        });
-    LOG_T("Starting OTA Update client");
-    ArduinoOTA.begin();
-    LOG_D("Started OTA Update client");
-
-    xTaskCreate(
-        updateLoopTask,
-        "updateLoopTask",
-        3072,
-        nullptr,
-        1,
-        &updateTaskHandle);
-
-    vTaskDelete(nullptr);
-}
-
-void updateLoopTask(void *)
-{
-    LOG_T("begin");
-    while (true)
-    {
-        ArduinoOTA.handle();
-        delay(5);
-    }
     vTaskDelete(nullptr);
 }
 
@@ -723,12 +631,10 @@ void showStartupMenu()
 {
     // operation mode:  0 - Normal Operation
     //                  1 - Setup
-    //                  2 - OTA Update
     // first the selected option is Normal Operation
     LOG_T("begin");
-    startupMenuHelper(0);
     size_t selectedOption = 0;
-    LOG_T("selectedOption=%d", selectedOption);
+    startupMenuHelper(selectedOption);
     subscribeToButtonEvents(xTaskGetCurrentTaskHandle());
 
     uint32_t notificationValue;
@@ -743,26 +649,15 @@ void showStartupMenu()
         while (true)
         {
             Button pressed = static_cast<Button>(notificationValue);
-            if (pressed == Button::Up)
+            if (pressed == Button::Up || pressed == Button::Down)
             {
-                if (selectedOption != 0)
-                    selectedOption--;
-                else
-                    selectedOption = 2;
-                LOG_T("selectedOption=%d", selectedOption);
-                startupMenuHelper(selectedOption);
-            }
-            else if (pressed == Button::Down)
-            {
-                if (selectedOption != 2)
-                    selectedOption++;
-                else
-                    selectedOption = 0;
-                LOG_T("selectedOption=%d", selectedOption);
+                selectedOption = (selectedOption + 1) % 2;
                 startupMenuHelper(selectedOption);
             }
             else if (pressed == Button::Enter)
+            {
                 break;
+            }
             
             xTaskNotifyWait(
                 pdFALSE,
@@ -796,15 +691,6 @@ void showStartupMenu()
             1,
             &setupTaskHandle);
         break;
-    case 2:
-        xTaskCreate(
-            otaUpdateTask,
-            "otaUpdateTask",
-            5120,
-            nullptr,
-            1,
-            &setupTaskHandle);
-        break;
     }
 }
 
@@ -830,15 +716,7 @@ void startupMenuHelper(int highlightedOption)
 
     display.println(menuSetupString);
 
-    if (highlightedOption == 2)
-        display.setTextColor(WHITE, BLACK);
-    else
-        display.setTextColor(BLACK);
-
-    display.println(menuOTAUpdateString);
-
     display.setTextColor(BLACK);
-
     display.display();
 }
 

@@ -8,24 +8,12 @@ const char errorNTPString[]         = "Error\nGetting NTP\nEnter it\nmanually";
 const char menuTitleString[]      = "Startup Menu";
 const char menuNormalModeString[] = "Normal Op.";
 const char menuSetupString[]      = "Setup";
-const char menuOTAUpdateString[]  = "OTA Update";
 
 // Strings for Setup
 const char setupSSIDPassString[]         = "SSID and pass.";
 const char setupIPString[]               = "IP";
 const char setupReceivedSettingsString[] = "Received\nsettings";
 const char setupRestartingString[]       = "Restarting";
-
-// Strings for OTA Update
-const char updateWaitingString[]        = "Waiting for\nupdate";
-const char updateStartedString[]        = "Update Started";
-const char updateProgressFormatString[] = "Progress: %u%%\n";
-const char updateEndedString[]          = "Update Ended";
-const char updateErrorAuthString[]      = "Auth Error";
-const char updateErrorBeginString[]     = "Begin Error";
-const char updateErrorConnectString[]   = "Connect Error";
-const char updateErrorReceiveString[]   = "Receive Error";
-const char updateErrorEndString[]       = "End Error";
 
 // Strings for Manual Time
 const char manualTimeTitleString[]  = "Manual Time";
