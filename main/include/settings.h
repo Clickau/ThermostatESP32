@@ -49,13 +49,14 @@ const int timesTryFirebase  = 2;                                           // Ho
 
 
 // Waiting times and time intervals
-const unsigned long waitingTimeInStartupMenu           = 5000;    // (ms) The time after which the Normal Operation option is automatically selected if no button is pressed in Startup Menu
-const unsigned long waitingTimeConnectWifi             = 10000;   // (ms) The time we wait for it to connect to the Wifi network, in normal operation mode and OTA mode
-const unsigned long waitingTimeInTemporaryScheduleMenu = 5000;    // (ms) The time after which we go back to Normal Operation from Temporary Schedule if no button is pressed
-const unsigned long waitingTimeNTP                     = 10000;   // (ms) The time we wait for the first NTP sync, after which we enter Manual Time if the sync was not successful
-const unsigned long intervalRetryErrors                = 300000;  // (ms) The time interval at which we attempt to resolve errors (reconnect to Wifi, to Firebase etc.)
-const unsigned long intervalUpdateTemperature          = 10000;   // (ms) The time interval at which we read the temperature and humidity from the sensor
-const unsigned long intervalUploadState                = 60000;   // (ms) The time interval at which we upload the current temperature, humidity and heater state to Firebase
+const unsigned long waitingTimeInStartupMenu           = 5000;           // (ms) The time after which the Normal Operation option is automatically selected if no button is pressed in Startup Menu
+const unsigned long waitingTimeConnectWifi             = 10000;          // (ms) The time we wait for it to connect to the Wifi network, in normal operation mode and OTA mode
+const unsigned long waitingTimeInTemporaryScheduleMenu = 5000;           // (ms) The time after which we go back to Normal Operation from Temporary Schedule if no button is pressed
+const unsigned long waitingTimeNTP                     = 10000;          // (ms) The time we wait for the first NTP sync, after which we enter Manual Time if the sync was not successful
+const unsigned long intervalRetryErrors                = 300000;         // (ms) The time interval at which we attempt to resolve errors (reconnect to Wifi, to Firebase etc.)
+const unsigned long intervalUpdateTemperature          = 10000;          // (ms) The time interval at which we read the temperature and humidity from the sensor
+const unsigned long intervalUploadState                = 60000;          // (ms) The time interval at which we upload the current temperature, humidity and heater state to Firebase
+const unsigned long intervalCheckUpdate                = 60*1000;  // (ms) The time interval at which we check for firmware updates
 
 
 // Temperature settings
@@ -65,3 +66,7 @@ const float tempThreshold                   = 0.5f;  // The temperature differen
 
 // Button settings
 const unsigned long buttonDebounceTime = 200;  // (ms) The minimum time between two button presses, used to prevent registering the same button press multiple times due to bouncing
+
+
+// Update settings
+const char latestReleaseURL[] = "https://clickau.github.io/UpdateTest/releases/latest.txt";
