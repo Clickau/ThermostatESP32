@@ -10,6 +10,7 @@
 #include <nvs_flash.h>
 #include <esp_http_server.h>
 #include <mdns.h>
+#include <esp_https_ota.h>
 
 #include "string_consts.h"
 #include "settings.h"
@@ -17,6 +18,7 @@
 #include "Logger.h"
 #include "DSEG7Classic-Bold6pt.h"
 #include "flame.h"
+#include "version.h"
 
 enum class Button
 {
@@ -35,7 +37,7 @@ struct settings_t
     char timezone[64];
 } settings;
 
-extern const char firebaseRootCA[] asm("_binary_firebaseio_root_ca_pem_start");
+extern const char certificateBundle[] asm("_binary_root_certs_pem_start");
 
 volatile bool wifiWorking = false;
 SemaphoreHandle_t wifiWorkingMutex;
@@ -51,9 +53,6 @@ int     humidity        = -1;
 uint8_t dhtReachability = 0;
 SemaphoreHandle_t sensorValuesMutex;
 
-unsigned long          lastRetryErrors       = 0;
-unsigned long          lastUploadState       = 0;
-TickType_t             lastTemperatureUpdate = 0;
 volatile unsigned long lastButtonPress       = 0;
 portMUX_TYPE           lastButtonPressMux    = portMUX_INITIALIZER_UNLOCKED;
 
@@ -73,6 +72,7 @@ TaskHandle_t uiTaskHandle;
 TaskHandle_t buttonSubscribedTaskHandle;
 TaskHandle_t sensorTaskHandle;
 TaskHandle_t evaluateSchedulesTaskHandle;
+TaskHandle_t updateTaskHandle;
 
 // Tasks
 void normalOperationTask(void *);
@@ -81,6 +81,7 @@ void firebaseLoopTask(void *);
 void uiLoopTask(void *);
 void sensorLoopTask(void *);
 void evaluateSchedulesLoopTask(void *);
+void updateLoopTask(void *);
 
 // General purpose
 void sendSignalToHeater(bool signal);
@@ -127,6 +128,7 @@ void buttonISR(void *button);
 
 // Event handlers
 void wifi_event_handler(void *, esp_event_base_t base, int32_t id, void *);
+esp_err_t update_http_event_handler(esp_http_client_event_t *event);
 
 
 const httpd_uri_t setupGetInfoURI      = { "/", HTTP_GET, setupGetInfoHandler, nullptr };
@@ -144,6 +146,7 @@ extern "C" void app_main()
     scheduleStringMutex = xSemaphoreCreateMutex();
     heaterStateMutex = xSemaphoreCreateMutex();
     wifiWorkingMutex = xSemaphoreCreateMutex();
+    LOG_D("Firmware version: %s", VERSION_STRING);
     // stopping the heater right at startup
     pinMode(pinHeater, OUTPUT);
     pinMode(pinUp, INPUT_PULLDOWN);
@@ -188,7 +191,7 @@ void normalOperationTask(void *)
     LOG_T("Starting DHT sensor");
     dht.setup(pinDHT, dhtType);
     LOG_D("Started DHT sensor");
-    firebaseClient.begin(firebaseRootCA, settings.firebaseURL, settings.firebaseSecret, "/Schedules.json");
+    firebaseClient.begin(certificateBundle, settings.firebaseURL, settings.firebaseSecret, "/Schedules.json");
     simpleDisplay(waitingForWifiString);
     bool wifiWorking = true;
     if (!connectSTAMode())
@@ -287,6 +290,15 @@ void normalOperationTask(void *)
         &evaluateSchedulesTaskHandle,
         0);
 
+    xTaskCreatePinnedToCore(
+        updateLoopTask,
+        "updateLoopTask",
+        6144,
+        nullptr,
+        1,
+        &updateTaskHandle,
+        0);
+
     // deactivate the temporary schedule in Firebase
     xTaskNotifyGive(firebaseTaskHandle);
 
@@ -346,6 +358,8 @@ void setupTask(void *)
 void firebaseLoopTask(void *)
 {
     LOG_T("begin");
+    unsigned long lastRetryErrors = 0;
+    unsigned long lastUploadState = 0;
     while (true)
     {
         if (!firebaseClient.getError())
@@ -473,7 +487,7 @@ void uiLoopTask(void *)
 void sensorLoopTask(void *)
 {
     LOG_T("begin");
-    lastTemperatureUpdate = xTaskGetTickCount();
+    TickType_t lastTemperatureUpdate = xTaskGetTickCount();
     while (true)
     {
         LOG_T("Updating temperature and humidity");
@@ -619,6 +633,94 @@ void evaluateSchedulesLoopTask(void *)
             // if there was no schedule active, we don't turn on the heater
             LOG_D("No schedule is active");
             sendSignalToHeater(false);
+        }
+    }
+    vTaskDelete(nullptr);
+}
+
+void updateLoopTask(void *)
+{
+    LOG_T("begin");
+
+    TickType_t lastCheckUpdate = 0;
+    while (true)
+    {
+        vTaskDelayUntil(&lastCheckUpdate, pdMS_TO_TICKS(intervalCheckUpdate));
+        std::string response;
+        esp_http_client_config_t config = {};
+        config.url = latestReleaseURL;
+        config.cert_pem = certificateBundle;
+        config.event_handler = update_http_event_handler;
+        // we make the buffers bigger to fit all the headers from Github and AWS
+        config.buffer_size = 2048;
+        config.buffer_size_tx = 2048;
+        config.user_data = &response;
+        LOG_D("Checking for updates");
+        esp_http_client_handle_t client = esp_http_client_init(&config);
+        esp_err_t err = esp_http_client_perform(client);
+        if (err != ESP_OK)
+        {
+            LOG_E("esp_http_client_perform error: %d", err);
+            esp_http_client_cleanup(client);
+            continue;
+        }
+        int code = esp_http_client_get_status_code(client);
+        if (code != 200)
+        {
+            LOG_E("Server returned status code: %d", code);
+            esp_http_client_cleanup(client);
+            continue;
+        }
+        esp_http_client_cleanup(client);
+        StaticJsonDocument<256> doc;
+        DeserializationError desErr = deserializeJson(doc, response);
+        if (desErr)
+        {
+            LOG_E("Error deserializing message: %s", desErr.c_str());
+            continue;
+        }
+        const char *version = doc["version"];
+        const char *updateURL = doc["url"];
+        if (!version || !updateURL)
+        {
+            LOG_E("Received incomplete message");
+            continue;
+        }
+        LOG_T("current version | latest version: %s|%s", VERSION_STRING, version);
+        int major = atoi(version), minor = 0, patch = 0;
+        const char *next = strchr(version, '.');
+        if (next)
+        {
+            minor = atoi(++next);
+            next = strchr(next, '.');
+            if (next)
+            {
+                patch = atoi(++next);
+            }
+        }
+        if ((major > VERSION_MAJOR) || 
+            (major == VERSION_MAJOR && minor > VERSION_MINOR) || 
+            (major == VERSION_MAJOR && minor == VERSION_MINOR && patch > VERSION_PATCH))
+        {
+            LOG_D("New update");
+            config = {};
+            config.url = updateURL;
+            config.cert_pem = certificateBundle;
+            // we make the buffers bigger to fit all the headers from Github and AWS
+            config.buffer_size = 2048;
+            config.buffer_size_tx = 2048;
+
+            err = esp_https_ota(&config);
+            if (err == ESP_OK)
+            {
+                LOG_D("Update successful");
+                delay(3000);
+                esp_restart();
+            }
+            else
+            {
+                LOG_E("Update failed with error: %d", err);
+            }
         }
     }
     vTaskDelete(nullptr);
@@ -1643,4 +1745,17 @@ void wifi_event_handler(void *, esp_event_base_t base, int32_t id, void *)
         wifiWorking = true;
         xSemaphoreGive(wifiWorkingMutex);
     }
+}
+
+esp_err_t update_http_event_handler(esp_http_client_event_t *event)
+{
+    if (event->event_id == HTTP_EVENT_ON_DATA)
+    {
+        if (event->user_data)
+        {
+            auto response = (std::string *) event->user_data;
+            response->append((const char *) event->data, event->data_len);
+        }
+    }
+    return ESP_OK;
 }
