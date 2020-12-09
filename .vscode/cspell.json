@@ -12,8 +12,10 @@
         "IRAM",
         "ISRs",
         "MBEDTLS",
+        "mdns",
         "MOSFET",
         "platformio",
+        "Popan",
         "println",
         "sntp",
         "SRCS",
@@ -21,7 +23,6 @@
         "starttm",
         "Tesp",
         "tmnow",
-        "Wifi",
-        "mdns"
+        "Wifi"
     ]
 }
