@@ -69,4 +69,4 @@ const unsigned long buttonDebounceTime = 200;  // (ms) The minimum time between 
 
 
 // Update settings
-const char latestReleaseURL[] = "https://clickau.github.io/ThermostatESP32/releases/latest.txt";
+const char latestReleaseURL[] = "https://clickau.github.io/ThermostatESP32/releases/latest.json";
