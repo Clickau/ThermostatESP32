@@ -64,8 +64,6 @@ inline SemaphoreHandle_t loggerMutex;
 
 #if LOGGER_SELECTED_LEVEL == LOGGER_LEVEL_DISABLED
 
-#warning "Logger is disabled"
-
 #define LOG_INIT()
 #define LOG_E(format, ...)
 #define LOG_W(format, ...)
