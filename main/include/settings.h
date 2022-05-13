@@ -41,7 +41,7 @@ const char mDNSHostname[] = "thermostat";
 
 
 // Display settings
-const uint8_t displayContrast = 50;
+const uint8_t displayContrast = 60;
 
 
 // Firebase settings
